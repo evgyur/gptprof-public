@@ -1,0 +1,22 @@
+# Python / Node noise
+__pycache__/
+*.py[cod]
+node_modules/
+npm-debug.log*
+
+# Runtime secrets / local state - never commit
+.codex/
+.openclaw/
+codex-profiles/
+auth.json
+auth-*.json
+state.json
+*.token
+*.secret
+.env
+.env.*
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
