@@ -282,7 +282,9 @@ function scheduleRestart() {
 function sessionStorePathForKey(sessionKey) {
   const match = String(sessionKey || "").match(/^agent:([a-z0-9._-]+):/i);
   if (!match) return "";
-  return `${process.env.HOME || "/home/chip"}/.openclaw/agents/${match[1]}/sessions/sessions.json`;
+  const home = process.env.HOME;
+  if (!home) return "";
+  return `${home}/.openclaw/agents/${match[1]}/sessions/sessions.json`;
 }
 
 function applySlashModelOverride(sessionKey, selection) {
