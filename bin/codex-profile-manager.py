@@ -141,10 +141,13 @@ def list_profiles():
         email = auth_email(auth) or "unknown"
         tokens = auth.get("tokens") or {}
         claims = b64url_json(str(tokens.get("access_token") or tokens.get("id_token") or ""))
+        auth_claims = claims.get("https://api.openai.com/auth") if isinstance(claims.get("https://api.openai.com/auth"), dict) else {}
+        plan_type = auth_claims.get("chatgpt_plan_type") or claims.get("chatgpt_plan_type")
         exp = claims.get("exp")
         profiles.append({
             "slug": p.name,
             "email": email,
+            "planType": plan_type if isinstance(plan_type, str) and plan_type.strip() else None,
             "active": state.get("active") == p.name,
             "expiresAt": int(exp) if isinstance(exp, (int, float)) else None,
             "lastRefresh": auth.get("last_refresh"),

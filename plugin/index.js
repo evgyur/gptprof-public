@@ -160,6 +160,22 @@ function profileUsageLeft(status, slug) {
   return Math.max(0, 100 - Math.round(maxUsage));
 }
 
+function profilePlanType(status, profile) {
+  const fromProfile = typeof profile?.planType === "string" ? profile.planType.trim().toLowerCase() : "";
+  if (fromProfile) return fromProfile;
+  const entry = asObject(asObject(status.usage)[profile?.slug]);
+  const fromUsage = typeof asObject(entry.usage).planType === "string" ? asObject(entry.usage).planType.trim().toLowerCase() : "";
+  return fromUsage;
+}
+
+function profilePlanBadge(status, profile) {
+  const planType = profilePlanType(status, profile);
+  if (planType === "plus") return "[$20]";
+  if (planType === "prolite") return "[$100]";
+  if (planType === "pro") return "[$200]";
+  return "";
+}
+
 function profileButtons(status) {
   const profiles = Array.isArray(status.profiles) ? status.profiles : [];
   const button = (text, callback_data) => ({ text, callback_data });
@@ -167,9 +183,10 @@ function profileButtons(status) {
     const left = profileUsageLeft(status, profile.slug);
     const overLimit = profileUsageOverThreshold(status, profile.slug);
     const marker = profile.active ? "✓" : overLimit ? "⚠" : "↔";
+    const planBadge = profilePlanBadge(status, profile);
     const usageSuffix = Number.isFinite(left) ? ` ${left}%` : "";
     return {
-      text: `${marker} ${profile.slug}${usageSuffix}`,
+      text: `${marker} ${profile.slug}${planBadge ? ` ${planBadge}` : ""}${usageSuffix}`,
       callback_data: `gptprof:${profile.slug}`,
     };
   });
@@ -252,10 +269,11 @@ function statusText(status) {
       : `🛠 Route needs repair\nCurrent: ${route.primaryModel || "none"} · runtime=${runtimeId}\nExpected: openai-codex/* · Pi`;
   const rows = profiles.map((profile) => {
     const marker = profile.active ? "✅" : "▫️";
+    const planBadge = profilePlanBadge(status, profile);
     const exp = profile.expiresAt ? new Date(profile.expiresAt * 1000).toISOString().slice(0, 10) : "unknown";
     const refresh = profile.hasRefreshToken ? "refresh ok" : "no refresh token";
     return [
-      `${marker} ${profile.slug}${profile.active ? " · active" : ""}`,
+      `${marker} ${profile.slug}${planBadge ? ` ${planBadge}` : ""}${profile.active ? " · active" : ""}`,
       `🔐 ${refresh} · expires ${exp}`,
       usageLine(status, profile.slug),
     ].join("\n");

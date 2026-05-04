@@ -14,7 +14,7 @@ Manage local OpenAI Codex OAuth profiles for OpenClaw and keep GPT traffic on th
 
 ## What It Does
 
-- `/gptprof` or `/gptprof status` shows the active profile, route status, cached usage, and Telegram profile buttons.
+- `/gptprof` or `/gptprof status` shows the active profile, plan badge when available, route status, cached usage, and Telegram profile buttons.
 - `/gptprof add` starts OpenAI device authorization.
 - `/gptprof check` completes pending device authorization after the user approves it.
 - `/gptprof refresh` refreshes usage cache on demand.

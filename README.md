@@ -32,6 +32,7 @@ This repo contains code only. It does not include tokens, account IDs, local aut
 Shows:
 
 - active local profile slug
+- plan badge derived from `chatgpt_plan_type`, when available: `[$20]` for Plus, `[$100]` for Pro Lite, `[$200]` for Pro
 - route status
 - token refresh availability
 - token expiry date when available
@@ -240,6 +241,7 @@ The smoke test checks JavaScript syntax, Python syntax, and obvious committed-to
 Показывает:
 
 - активный локальный профиль
+- badge тарифа из `chatgpt_plan_type`, если доступен: `[$20]` для Plus, `[$100]` для Pro Lite, `[$200]` для Pro
 - статус route
 - наличие refresh token
 - дату истечения токена
