@@ -282,9 +282,7 @@ function scheduleRestart() {
 function sessionStorePathForKey(sessionKey) {
   const match = String(sessionKey || "").match(/^agent:([a-z0-9._-]+):/i);
   if (!match) return "";
-  const home = process.env.HOME;
-  if (!home) return "";
-  return `${home}/.openclaw/agents/${match[1]}/sessions/sessions.json`;
+  return `${process.env.HOME || "/home/chip"}/.openclaw/agents/${match[1]}/sessions/sessions.json`;
 }
 
 function applySlashModelOverride(sessionKey, selection) {
@@ -447,18 +445,6 @@ async function handleBeforeDispatch(event, context, config) {
     if (!patched.ok) return { handled: true, text: `GPT model switch failed: ${patched.error}` };
     applySlashModelOverrideAfterFlush(sessionKey, selection);
     return { handled: true, text: "Model set to gptt (openai-codex/gpt-5.5) with thinking medium and fast on for this session." };
-  }
-  if (command === "mmfast") {
-    const sessionKey = event?.sessionKey || context?.sessionKey;
-    const selection = {
-      provider: "minimax",
-      model: "MiniMax-M2.7-highspeed",
-      thinkingLevel: "high",
-    };
-    const patched = applySlashModelOverride(sessionKey, selection);
-    if (!patched.ok) return { handled: true, text: `Model switch failed: ${patched.error}` };
-    applySlashModelOverrideAfterFlush(sessionKey, selection);
-    return { handled: true, text: "Model set to mmfast (minimax/MiniMax-M2.7-highspeed) with thinking high for this session." };
   }
   const args = commandPartsFromText(text);
   if (!args) return { handled: false };

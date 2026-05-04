@@ -96,10 +96,9 @@ The plugin can intercept selected slash aliases before model dispatch:
 
 ```text
 /gptt
-/mmfast
 ```
 
-`/gptt` keeps the current session on `openai-codex/gpt-5.5` with medium thinking and fast mode. `/mmfast` switches the current session to `minimax/MiniMax-M2.7-highspeed` with high thinking. These aliases patch only the current OpenClaw session store entry and make a timestamped backup before writing.
+`/gptt` keeps the current session on `openai-codex/gpt-5.5` with medium thinking and fast mode. This alias patches only the current OpenClaw session store entry and makes a timestamped backup before writing.
 
 ### Apply the base Pi route
 
@@ -134,7 +133,6 @@ OpenClaw `2026.5.3-beta.2` rejects `agents.defaults.agentRuntime.fallback`; do n
 /gptprof use-pi
 /gptprof switch <slug>
 /gptt
-/mmfast
 ```
 
 The manager CLI also works directly:
@@ -306,10 +304,9 @@ Plugin может перехватывать отдельные slash aliases д
 
 ```text
 /gptt
-/mmfast
 ```
 
-`/gptt` держит текущую сессию на `openai-codex/gpt-5.5` с medium thinking и fast mode. `/mmfast` переключает текущую сессию на `minimax/MiniMax-M2.7-highspeed` с high thinking. Эти aliases патчат только текущую OpenClaw session store entry и перед записью делают timestamped backup.
+`/gptt` держит текущую сессию на `openai-codex/gpt-5.5` с medium thinking и fast mode. Этот alias патчит только текущую OpenClaw session store entry и перед записью делает timestamped backup.
 
 ### Применить базовый Pi route
 
@@ -344,7 +341,6 @@ OpenClaw `2026.5.3-beta.2` отклоняет `agents.defaults.agentRuntime.fall
 /gptprof use-pi
 /gptprof switch <slug>
 /gptt
-/mmfast
 ```
 
 CLI менеджера:
