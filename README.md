@@ -219,6 +219,8 @@ The smoke test checks JavaScript syntax, Python syntax, and obvious committed-to
 
 # Русский
 
+![gptprof Telegram profile switcher UI](assets/gptprof-telegram-status.png)
+
 ## Зачем Нужен Этот Скилл
 
 `gptprof-public` управляет несколькими локальными ChatGPT/OpenAI Codex OAuth-профилями для OpenClaw. Он добавляет профили, переключает их, показывает usage по 5-часовому и недельному окнам и держит базовый GPT route на OpenAI Codex через Pi runtime.
