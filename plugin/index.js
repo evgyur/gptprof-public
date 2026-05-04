@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
 const Type = {
   String: (options = {}) => ({ type: "string", ...options }),
   Optional: (schema) => ({ ...schema, optional: true }),
@@ -211,12 +212,21 @@ function usageLine(status, slug) {
   const windows = asObject(usage.windows);
   const fiveHour = asObject(windows.fiveHour || windows.primary);
   const weekly = asObject(windows.weekly || windows.secondary);
+  const countdown = asObject(entry.countdown);
   if (!entry.usage && !entry.lastError) return "📊 Usage: not checked yet";
   const stale = entry.fresh === false ? " · stale" : "";
   const error = entry.lastError?.error ? ` · last error: ${entry.lastError.error}` : "";
+  const left5h = Math.max(0, Math.round(100 - Number(fiveHour.usedPercent)));
+  const leftWeek = Math.max(0, Math.round(100 - Number(weekly.usedPercent)));
+  const fiveHourLine = left5h === 0 && countdown.fiveHour
+    ? `📊 5h: 0% left ⏱ ${countdown.fiveHour}`
+    : `📊 5h: ${left5h}% left`;
+  const weekLine = leftWeek === 0 && countdown.weekly
+    ? `📅 Week: 0% left ⏱ ${countdown.weekly}`
+    : `📅 Week: ${leftWeek}% left`;
   return [
-    `📊 5h: ${formatPercent(fiveHour.usedPercent)} used · ${formatLeft(fiveHour.usedPercent)}`,
-    `📅 Week: ${formatPercent(weekly.usedPercent)} used · ${formatLeft(weekly.usedPercent)}`,
+    fiveHourLine,
+    weekLine,
     `🕒 Cache: ${formatCacheAge(entry.ageSeconds)}${stale}${error}`,
   ].join("\n");
 }
@@ -267,6 +277,47 @@ function scheduleRestart() {
     detached: true,
   });
   child.unref();
+}
+
+function sessionStorePathForKey(sessionKey) {
+  const match = String(sessionKey || "").match(/^agent:([a-z0-9._-]+):/i);
+  if (!match) return "";
+  const home = process.env.HOME;
+  if (!home) return "";
+  return `${home}/.openclaw/agents/${match[1]}/sessions/sessions.json`;
+}
+
+function applySlashModelOverride(sessionKey, selection) {
+  const path = sessionStorePathForKey(sessionKey);
+  if (!path) return { ok: false, error: "missing session key" };
+  const data = JSON.parse(readFileSync(path, "utf8"));
+  const entry = data[sessionKey];
+  if (!entry || typeof entry !== "object") return { ok: false, error: `session not found: ${sessionKey}` };
+  copyFileSync(path, `${path}.bak-gptprof-model-switch-${Date.now()}`);
+  entry.providerOverride = selection.provider;
+  entry.modelOverride = selection.model;
+  entry.modelOverrideSource = "user";
+  if (selection.thinkingLevel) entry.thinkingLevel = selection.thinkingLevel;
+  if (typeof selection.fastMode === "boolean") entry.fastMode = selection.fastMode;
+  delete entry.model;
+  delete entry.modelProvider;
+  delete entry.contextTokens;
+  delete entry.fallbackNoticeSelectedModel;
+  delete entry.fallbackNoticeActiveModel;
+  delete entry.fallbackNoticeReason;
+  entry.updatedAt = Date.now();
+  writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`);
+  return { ok: true };
+}
+
+function applySlashModelOverrideAfterFlush(sessionKey, selection) {
+  setTimeout(() => {
+    try {
+      applySlashModelOverride(sessionKey, selection);
+    } catch (error) {
+      console.warn("[gptprof] delayed model switch patch failed", error);
+    }
+  }, 1_000).unref?.();
 }
 
 async function handleCommand(config) {
@@ -385,7 +436,29 @@ async function handleBeforeDispatch(event, context, config) {
   const command = slashCommandFromText(text);
   if (command === "gptt") {
     await managerJson({ ...config, timeoutMs: 8_000 }, ["autoswitch"]);
-    return { handled: false };
+    const sessionKey = event?.sessionKey || context?.sessionKey;
+    const selection = {
+      provider: "openai-codex",
+      model: "gpt-5.5",
+      thinkingLevel: "medium",
+      fastMode: true,
+    };
+    const patched = applySlashModelOverride(sessionKey, selection);
+    if (!patched.ok) return { handled: true, text: `GPT model switch failed: ${patched.error}` };
+    applySlashModelOverrideAfterFlush(sessionKey, selection);
+    return { handled: true, text: "Model set to gptt (openai-codex/gpt-5.5) with thinking medium and fast on for this session." };
+  }
+  if (command === "mmfast") {
+    const sessionKey = event?.sessionKey || context?.sessionKey;
+    const selection = {
+      provider: "minimax",
+      model: "MiniMax-M2.7-highspeed",
+      thinkingLevel: "high",
+    };
+    const patched = applySlashModelOverride(sessionKey, selection);
+    if (!patched.ok) return { handled: true, text: `Model switch failed: ${patched.error}` };
+    applySlashModelOverrideAfterFlush(sessionKey, selection);
+    return { handled: true, text: "Model set to mmfast (minimax/MiniMax-M2.7-highspeed) with thinking high for this session." };
   }
   const args = commandPartsFromText(text);
   if (!args) return { handled: false };

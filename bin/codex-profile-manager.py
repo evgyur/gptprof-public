@@ -170,6 +170,34 @@ def cache_age_seconds(entry):
     return max(0, int(time.time() - ts))
 
 
+def window_countdown(windows):
+    """Return countdown strings for fiveHour and weekly windows."""
+    now = time.time()
+    result = {}
+    for name in ("fiveHour", "weekly"):
+        win = (windows or {}).get(name) or {}
+        used = win.get("usedPercent")
+        reset = win.get("resetAt")
+        if not isinstance(used, (int, float)):
+            result[name] = None
+            continue
+        if used == 0:
+            result[name] = "-"
+        elif isinstance(reset, (int, float)):
+            remaining = reset - now
+            if remaining <= 0:
+                result[name] = "expired"
+            elif remaining < 3600:
+                result[name] = f"~{int(remaining/60)}m"
+            elif remaining < 10 * 3600:
+                result[name] = f"~{remaining/3600:.1f}h"
+            else:
+                result[name] = f"~{int(remaining/3600)}h"
+        else:
+            result[name] = None
+    return result
+
+
 def usage_window_name(window, fallback):
     seconds = (window or {}).get("limit_window_seconds")
     if isinstance(seconds, (int, float)):
@@ -264,13 +292,16 @@ def usage_cache_summary():
         if not isinstance(entry, dict):
             continue
         age = cache_age_seconds(entry)
+        usage = entry.get("usage") if isinstance(entry.get("usage"), dict) else None
+        windows = (usage or {}).get("windows") if isinstance(usage, dict) else None
         out[slug] = {
-            "usage": entry.get("usage") if isinstance(entry.get("usage"), dict) else None,
+            "usage": usage,
             "fetchedAt": entry.get("fetchedAt"),
             "ageSeconds": age,
             "fresh": isinstance(age, int) and age <= USAGE_CACHE_MAX_AGE_SECONDS,
             "lastError": entry.get("lastError"),
             "lastErrorAt": entry.get("lastErrorAt"),
+            "countdown": window_countdown(windows),
         }
     return out
 

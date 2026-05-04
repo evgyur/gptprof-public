@@ -88,6 +88,19 @@ Switches only when the active profile has either its 5-hour or weekly usage wind
 
 If the target profile is already over threshold, the Telegram button shows a warning marker and the callback explains why it is not switching. This avoids the confusing case where a manual switch succeeds and the next `/gptprof` or `/gptt` immediately switches away again.
 
+When a usage window has `0%` left, the status can show an approximate reset countdown next to that window, for example `0% left ⏱ ~1.5h`.
+
+### Session model aliases
+
+The plugin can intercept selected slash aliases before model dispatch:
+
+```text
+/gptt
+/mmfast
+```
+
+`/gptt` keeps the current session on `openai-codex/gpt-5.5` with medium thinking and fast mode. `/mmfast` switches the current session to `minimax/MiniMax-M2.7-highspeed` with high thinking. These aliases patch only the current OpenClaw session store entry and make a timestamped backup before writing.
+
 ### Apply the base Pi route
 
 ```text
@@ -120,6 +133,8 @@ OpenClaw `2026.5.3-beta.2` rejects `agents.defaults.agentRuntime.fallback`; do n
 /gptprof autoswitch
 /gptprof use-pi
 /gptprof switch <slug>
+/gptt
+/mmfast
 ```
 
 The manager CLI also works directly:
@@ -283,6 +298,19 @@ Email в компактном Telegram-статусе намеренно не п
 
 Если целевой профиль уже выше порога, Telegram-кнопка показывает warning marker, а callback объясняет, почему переключения нет. Это убирает ситуацию, когда ручной switch успешен, но следующий `/gptprof` или `/gptt` тут же переключает обратно.
 
+Когда в usage window осталось `0%`, статус может показывать примерный countdown до reset, например `0% left ⏱ ~1.5h`.
+
+### Session model aliases
+
+Plugin может перехватывать отдельные slash aliases до model dispatch:
+
+```text
+/gptt
+/mmfast
+```
+
+`/gptt` держит текущую сессию на `openai-codex/gpt-5.5` с medium thinking и fast mode. `/mmfast` переключает текущую сессию на `minimax/MiniMax-M2.7-highspeed` с high thinking. Эти aliases патчат только текущую OpenClaw session store entry и перед записью делают timestamped backup.
+
 ### Применить базовый Pi route
 
 ```text
@@ -315,6 +343,8 @@ OpenClaw `2026.5.3-beta.2` отклоняет `agents.defaults.agentRuntime.fall
 /gptprof autoswitch
 /gptprof use-pi
 /gptprof switch <slug>
+/gptt
+/mmfast
 ```
 
 CLI менеджера:

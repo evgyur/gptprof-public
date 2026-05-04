@@ -21,6 +21,8 @@ Manage local OpenAI Codex OAuth profiles for OpenClaw and keep GPT traffic on th
 - `/gptprof autoswitch` switches only when the active profile is at or above the 95% usage threshold and a healthy spare profile is below threshold.
 - `/gptprof use-pi` sets `agents.defaults.model.primary` to `openai-codex/gpt-5.5` and `agents.defaults.agentRuntime.id` to `pi`.
 - `/gptprof switch <slug>` switches to an existing local profile unless the selected profile is already over the autoswitch threshold.
+- `/gptt` patches the current session to `openai-codex/gpt-5.5` with medium thinking and fast mode.
+- `/mmfast` patches the current session to `minimax/MiniMax-M2.7-highspeed` with high thinking.
 
 ## Important Routing Distinction
 
@@ -52,3 +54,5 @@ Runtime secrets stay in user-local files only:
 - `~/.openclaw/agents/*/agent/auth-*.json`
 
 The OAuth client id in the manager is public application metadata, not a client secret.
+
+Session alias handling writes only the current OpenClaw session store entry and creates a timestamped backup before changing model override fields.
