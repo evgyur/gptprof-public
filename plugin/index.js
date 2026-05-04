@@ -297,6 +297,10 @@ function scheduleRestart() {
   child.unref();
 }
 
+function scheduleRestartAfterAutoswitch(config, autoswitched) {
+  if (config.restartAfterSwitch && autoswitched?.switched) scheduleRestart();
+}
+
 function sessionStorePathForKey(sessionKey) {
   const match = String(sessionKey || "").match(/^agent:([a-z0-9._-]+):/i);
   if (!match) return "";
@@ -384,7 +388,8 @@ async function handleTextCommand(args, config) {
   const fastConfig = { ...config, timeoutMs: Math.min(config.timeoutMs || DEFAULT_TIMEOUT_MS, 12_000) };
   const action = String(args[0] || "status").toLowerCase();
   if (action === "status") {
-    await managerJson({ ...fastConfig, timeoutMs: 8_000 }, ["autoswitch"]);
+    const autoswitched = await managerJson({ ...fastConfig, timeoutMs: 8_000 }, ["autoswitch"]);
+    scheduleRestartAfterAutoswitch(config, autoswitched);
     const status = await managerJson(fastConfig, ["status"]);
     if (status.ok === false) return `GPT profile status failed: ${status.error}`;
     return textOnlyStatus(status);
@@ -397,6 +402,7 @@ async function handleTextCommand(args, config) {
   }
   if (action === "autoswitch") {
     const autoswitched = await managerJson({ ...config, timeoutMs: 8_000 }, ["autoswitch"]);
+    scheduleRestartAfterAutoswitch(config, autoswitched);
     const status = await managerJson(fastConfig, ["status"]);
     return `${autoswitchLine(autoswitched)}\n\n${statusText(status)}`;
   }
@@ -457,7 +463,8 @@ async function handleBeforeDispatch(event, context, config) {
   const text = eventText(event) || eventText(context);
   const command = slashCommandFromText(text);
   if (command === "gptt") {
-    await managerJson({ ...config, timeoutMs: 8_000 }, ["autoswitch"]);
+    const autoswitched = await managerJson({ ...config, timeoutMs: 8_000 }, ["autoswitch"]);
+    scheduleRestartAfterAutoswitch(config, autoswitched);
     const status = await managerJson({ ...config, timeoutMs: 8_000 }, ["status"]);
     const activeProfile = Array.isArray(status.profiles) ? status.profiles.find((profile) => profile.active) : null;
     const authProfile = activeProfile?.email ? `openai-codex:${activeProfile.email}` : "";
@@ -544,6 +551,7 @@ async function handleInteractive(ctx, config) {
   }
   if (slug === "autoswitch") {
     const autoswitched = await managerJson({ ...config, timeoutMs: 8_000 }, ["autoswitch"]);
+    scheduleRestartAfterAutoswitch(config, autoswitched);
     const status = await managerJson(config, ["status"]);
     await ctx.respond?.editMessage?.({ text: `${autoswitchLine(autoswitched)}\n\n${statusText(status)}`, buttons: profileButtons(status) });
     return { handled: true };
