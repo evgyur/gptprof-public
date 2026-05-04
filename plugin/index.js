@@ -184,9 +184,9 @@ function profileButtons(status) {
     const overLimit = profileUsageOverThreshold(status, profile.slug);
     const marker = profile.active ? "✓" : overLimit ? "⚠" : "↔";
     const planBadge = profilePlanBadge(status, profile);
-    const usageSuffix = Number.isFinite(left) ? ` ${left}%` : "";
+    const usagePrefix = Number.isFinite(left) ? ` ${left}%` : "";
     return {
-      text: `${marker} ${profile.slug}${planBadge ? ` ${planBadge}` : ""}${usageSuffix}`,
+      text: `${marker}${usagePrefix} ${profile.slug}${planBadge ? ` ${planBadge}` : ""}`,
       callback_data: `gptprof:${profile.slug}`,
     };
   });
@@ -214,6 +214,14 @@ function formatLeft(value) {
   return `${Math.max(0, Math.round(100 - Number(value)))}% left`;
 }
 
+function windowLeftLine(icon, label, window, countdownValue) {
+  const used = Number(window?.usedPercent);
+  if (!Number.isFinite(used)) return `${icon} ${label}: usage unavailable`;
+  const left = Math.max(0, Math.round(100 - used));
+  if (left === 0 && countdownValue) return `${icon} ${label}: 0% left ⏱ ${countdownValue}`;
+  return `${icon} ${label}: ${left}% left`;
+}
+
 function formatCacheAge(seconds) {
   if (!Number.isFinite(Number(seconds))) return "not checked";
   const value = Number(seconds);
@@ -233,14 +241,9 @@ function usageLine(status, slug) {
   if (!entry.usage && !entry.lastError) return "📊 Usage: not checked yet";
   const stale = entry.fresh === false ? " · stale" : "";
   const error = entry.lastError?.error ? ` · last error: ${entry.lastError.error}` : "";
-  const left5h = Math.max(0, Math.round(100 - Number(fiveHour.usedPercent)));
-  const leftWeek = Math.max(0, Math.round(100 - Number(weekly.usedPercent)));
-  const fiveHourLine = left5h === 0 && countdown.fiveHour
-    ? `📊 5h: 0% left ⏱ ${countdown.fiveHour}`
-    : `📊 5h: ${left5h}% left`;
-  const weekLine = leftWeek === 0 && countdown.weekly
-    ? `📅 Week: 0% left ⏱ ${countdown.weekly}`
-    : `📅 Week: ${leftWeek}% left`;
+  if (!entry.usage) return `📊 Usage: unavailable${error}`;
+  const fiveHourLine = windowLeftLine("📊", "5h", fiveHour, countdown.fiveHour);
+  const weekLine = windowLeftLine("📅", "Week", weekly, countdown.weekly);
   return [
     fiveHourLine,
     weekLine,
@@ -304,9 +307,7 @@ function scheduleRestartAfterAutoswitch(config, autoswitched) {
 function sessionStorePathForKey(sessionKey) {
   const match = String(sessionKey || "").match(/^agent:([a-z0-9._-]+):/i);
   if (!match) return "";
-  const home = process.env.HOME;
-  if (!home) return "";
-  return `${home}/.openclaw/agents/${match[1]}/sessions/sessions.json`;
+  return `${process.env.HOME || "/home/chip"}/.openclaw/agents/${match[1]}/sessions/sessions.json`;
 }
 
 function applySlashModelOverride(sessionKey, selection) {
