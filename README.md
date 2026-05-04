@@ -2,7 +2,7 @@
 
 Sanitized public OpenClaw skill/plugin for managing OpenAI Codex OAuth profiles, GPT profile buttons, and lazy usage-based profile switching.
 
-![gptprof Telegram profile switcher UI](assets/gptprof-telegram-status.png)
+![gptprof Telegram profile switcher UI](assets/gptprof-telegram-status.jpg)
 
 Русская версия - ниже.
 
@@ -219,7 +219,7 @@ The smoke test checks JavaScript syntax, Python syntax, and obvious committed-to
 
 # Русский
 
-![gptprof Telegram profile switcher UI](assets/gptprof-telegram-status.png)
+![gptprof Telegram profile switcher UI](assets/gptprof-telegram-status.jpg)
 
 ## Зачем Нужен Этот Скилл
 
