@@ -99,7 +99,7 @@ The plugin can intercept selected slash aliases before model dispatch:
 /gptt
 ```
 
-`/gptt` keeps the current session on `openai-codex/gpt-5.5` with medium thinking and fast mode. This alias patches only the current OpenClaw session store entry and makes a timestamped backup before writing.
+`/gptt` keeps the current session on `openai-codex/gpt-5.5` with the active gptprof auth profile, medium thinking, and fast mode. This alias patches only the current OpenClaw session store entry and makes a timestamped backup before writing.
 
 ### Apply the base Pi route
 
@@ -308,7 +308,7 @@ Plugin может перехватывать отдельные slash aliases д
 /gptt
 ```
 
-`/gptt` держит текущую сессию на `openai-codex/gpt-5.5` с medium thinking и fast mode. Этот alias патчит только текущую OpenClaw session store entry и перед записью делает timestamped backup.
+`/gptt` держит текущую сессию на `openai-codex/gpt-5.5` с активным gptprof auth profile, medium thinking и fast mode. Этот alias патчит только текущую OpenClaw session store entry и перед записью делает timestamped backup.
 
 ### Применить базовый Pi route
 

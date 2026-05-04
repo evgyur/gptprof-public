@@ -312,6 +312,10 @@ function applySlashModelOverride(sessionKey, selection) {
   const entry = data[sessionKey];
   if (!entry || typeof entry !== "object") return { ok: false, error: `session not found: ${sessionKey}` };
   copyFileSync(path, `${path}.bak-gptprof-model-switch-${Date.now()}`);
+  if (selection.authProfile) {
+    entry.authProfileOverride = selection.authProfile;
+    entry.authProfileOverrideSource = "codex-profile-switcher";
+  }
   entry.providerOverride = selection.provider;
   entry.modelOverride = selection.model;
   entry.modelOverrideSource = "user";
@@ -454,17 +458,21 @@ async function handleBeforeDispatch(event, context, config) {
   const command = slashCommandFromText(text);
   if (command === "gptt") {
     await managerJson({ ...config, timeoutMs: 8_000 }, ["autoswitch"]);
+    const status = await managerJson({ ...config, timeoutMs: 8_000 }, ["status"]);
+    const activeProfile = Array.isArray(status.profiles) ? status.profiles.find((profile) => profile.active) : null;
+    const authProfile = activeProfile?.email ? `openai-codex:${activeProfile.email}` : "";
     const sessionKey = event?.sessionKey || context?.sessionKey;
     const selection = {
       provider: "openai-codex",
       model: "gpt-5.5",
       thinkingLevel: "medium",
       fastMode: true,
+      authProfile,
     };
     const patched = applySlashModelOverride(sessionKey, selection);
     if (!patched.ok) return { handled: true, text: `GPT model switch failed: ${patched.error}` };
     applySlashModelOverrideAfterFlush(sessionKey, selection);
-    return { handled: true, text: "Model set to gptt (openai-codex/gpt-5.5) with thinking medium and fast on for this session." };
+    return { handled: true, text: `Model set to gptt (openai-codex/gpt-5.5) with ${status.active || "active"} auth, thinking medium and fast on for this session.` };
   }
   const args = commandPartsFromText(text);
   if (!args) return { handled: false };

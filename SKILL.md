@@ -21,7 +21,7 @@ Manage local OpenAI Codex OAuth profiles for OpenClaw and keep GPT traffic on th
 - `/gptprof autoswitch` switches only when the active profile is at or above the 95% usage threshold and a healthy spare profile is below threshold.
 - `/gptprof use-pi` sets `agents.defaults.model.primary` to `openai-codex/gpt-5.5` and `agents.defaults.agentRuntime.id` to `pi`.
 - `/gptprof switch <slug>` switches to an existing local profile unless the selected profile is already over the autoswitch threshold.
-- `/gptt` patches the current session to `openai-codex/gpt-5.5` with medium thinking and fast mode.
+- `/gptt` patches the current session to `openai-codex/gpt-5.5` with the active gptprof auth profile, medium thinking, and fast mode.
 
 ## Important Routing Distinction
 
