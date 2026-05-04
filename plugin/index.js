@@ -153,14 +153,20 @@ function profileUsageOverThreshold(status, slug) {
   return Number.isFinite(maxUsage) && maxUsage >= 95;
 }
 
+function profileUsageLeft(status, slug) {
+  const maxUsage = profileUsageMax(status, slug);
+  if (!Number.isFinite(maxUsage)) return null;
+  return Math.max(0, 100 - Math.round(maxUsage));
+}
+
 function profileButtons(status) {
   const profiles = Array.isArray(status.profiles) ? status.profiles : [];
   const button = (text, callback_data) => ({ text, callback_data });
   const buttons = profiles.map((profile) => {
-    const maxUsage = profileUsageMax(status, profile.slug);
+    const left = profileUsageLeft(status, profile.slug);
     const overLimit = profileUsageOverThreshold(status, profile.slug);
     const marker = profile.active ? "✓" : overLimit ? "⚠" : "↔";
-    const usageSuffix = Number.isFinite(maxUsage) ? ` ${Math.round(maxUsage)}%` : "";
+    const usageSuffix = Number.isFinite(left) ? ` ${left}%` : "";
     return {
       text: `${marker} ${profile.slug}${usageSuffix}`,
       callback_data: `gptprof:${profile.slug}`,
@@ -250,10 +256,9 @@ function statusText(status) {
   return [
     `🤖 GPT profile: ${status.active || "none"}`,
     routeLine,
-    "",
     rows.length ? rows.join("\n\n") : "No profiles found in ~/.openclaw/codex-profiles.",
     pending.trim(),
-  ].filter(Boolean).join("\n");
+  ].filter(Boolean).join("\n\n");
 }
 
 function scheduleRestart() {
