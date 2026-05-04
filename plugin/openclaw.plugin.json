@@ -1,7 +1,7 @@
 {
   "id": "codex-profile-switcher",
   "name": "GPT Profile Switcher",
-  "description": "Telegram /gptprof buttons for OpenAI account profiles with native Codex runtime routing.",
+  "description": "Telegram /gptprof buttons for OpenAI Codex profile switching, usage checks, and the base Pi route.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

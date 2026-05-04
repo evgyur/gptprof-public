@@ -48,10 +48,11 @@ function getConfig(api) {
   };
 }
 
-function textResult(text, details) {
+function textResult(text, details, channelData) {
   return {
     content: [{ type: "text", text }],
     details,
+    ...(channelData ? { channelData } : {}),
   };
 }
 
@@ -96,6 +97,34 @@ function parseJson(text) {
   }
 }
 
+function firstString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function eventText(event) {
+  return firstString(
+    event?.messageText,
+    event?.text,
+    event?.content,
+    event?.bodyForAgent,
+    event?.body,
+    event?.input,
+    event?.prompt,
+    event?.message?.text,
+    event?.message?.message,
+    event?.message?.content,
+    event?.update?.message?.text,
+    event?.update?.message?.message,
+    event?.telegram?.message?.text,
+    event?.telegram?.message?.message,
+    event?.ctx?.message?.text,
+    event?.raw?.message?.text,
+  );
+}
+
 async function managerJson(config, args) {
   const result = await runManager(config, args);
   const payload = parseJson(result.stdout);
@@ -106,51 +135,125 @@ async function managerJson(config, args) {
   return payload;
 }
 
+function profileUsageMax(status, slug) {
+  const entry = asObject(asObject(status.usage)[slug]);
+  const usage = asObject(entry.usage);
+  const windows = asObject(usage.windows);
+  const values = [
+    asObject(windows.fiveHour || windows.primary).usedPercent,
+    asObject(windows.weekly || windows.secondary).usedPercent,
+    usage.primaryUsed,
+    usage.secondaryUsed,
+  ].map(Number).filter(Number.isFinite);
+  return values.length ? Math.max(...values) : null;
+}
+
+function profileUsageOverThreshold(status, slug) {
+  const maxUsage = profileUsageMax(status, slug);
+  return Number.isFinite(maxUsage) && maxUsage >= 95;
+}
+
 function profileButtons(status) {
   const profiles = Array.isArray(status.profiles) ? status.profiles : [];
-  const buttons = profiles.map((profile) => ({
-    label: profile.active ? `* ${profile.slug}` : profile.slug,
-    value: `gptprof:${profile.slug}`,
-    style: profile.active ? "success" : "secondary",
-  }));
-  buttons.push({
-    label: "+ Add profile",
-    value: "gptprof:device-start",
-    style: "primary",
+  const button = (text, callback_data) => ({ text, callback_data });
+  const buttons = profiles.map((profile) => {
+    const maxUsage = profileUsageMax(status, profile.slug);
+    const overLimit = profileUsageOverThreshold(status, profile.slug);
+    const marker = profile.active ? "✓" : overLimit ? "⚠" : "↔";
+    const usageSuffix = Number.isFinite(maxUsage) ? ` ${Math.round(maxUsage)}%` : "";
+    return {
+      text: `${marker} ${profile.slug}${usageSuffix}`,
+      callback_data: `gptprof:${profile.slug}`,
+    };
   });
-  buttons.push({
-    label: "Check auth",
-    value: "gptprof:device-check",
-    style: "secondary",
-  });
+  buttons.push(button("🔄 Usage", "gptprof:refresh"));
+  buttons.push(button("🔁 Autoswitch", "gptprof:autoswitch"));
+  buttons.push(button("➕ Add", "gptprof:device-start"));
+  buttons.push(button("✅ Check auth", "gptprof:device-check"));
   if (!status?.route?.ok) {
-    buttons.push({
-      label: "Use native Codex",
-      value: "gptprof:route-native",
-      style: "warning",
-    });
+    buttons.push(button("🛠 Fix Pi route", "gptprof:route-pi"));
   }
-  return buttons;
+  const rows = [];
+  for (let index = 0; index < buttons.length; index += 2) {
+    rows.push(buttons.slice(index, index + 2));
+  }
+  return rows;
+}
+
+function formatPercent(value) {
+  if (!Number.isFinite(Number(value))) return "?";
+  return `${Math.round(Number(value))}%`;
+}
+
+function formatLeft(value) {
+  if (!Number.isFinite(Number(value))) return "?";
+  return `${Math.max(0, Math.round(100 - Number(value)))}% left`;
+}
+
+function formatCacheAge(seconds) {
+  if (!Number.isFinite(Number(seconds))) return "not checked";
+  const value = Number(seconds);
+  if (value < 60) return "just now";
+  const minutes = Math.round(value / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.round(minutes / 60)}h ago`;
+}
+
+function usageLine(status, slug) {
+  const entry = asObject(asObject(status.usage)[slug]);
+  const usage = asObject(entry.usage);
+  const windows = asObject(usage.windows);
+  const fiveHour = asObject(windows.fiveHour || windows.primary);
+  const weekly = asObject(windows.weekly || windows.secondary);
+  if (!entry.usage && !entry.lastError) return "📊 Usage: not checked yet";
+  const stale = entry.fresh === false ? " · stale" : "";
+  const error = entry.lastError?.error ? ` · last error: ${entry.lastError.error}` : "";
+  return [
+    `📊 5h: ${formatPercent(fiveHour.usedPercent)} used · ${formatLeft(fiveHour.usedPercent)}`,
+    `📅 Week: ${formatPercent(weekly.usedPercent)} used · ${formatLeft(weekly.usedPercent)}`,
+    `🕒 Cache: ${formatCacheAge(entry.ageSeconds)}${stale}${error}`,
+  ].join("\n");
+}
+
+function autoswitchLine(result) {
+  if (!result || typeof result !== "object") return "";
+  if (result.ok === false) return `⚠️ Autoswitch skipped: ${result.reason || result.error || "usage unavailable"}`;
+  if (result.switched) return `🔁 Autoswitch: ${result.from} → ${result.to}`;
+  if (result.reason === "below_threshold") return `✅ Autoswitch: no switch needed`;
+  if (result.reason === "no_healthy_candidate") return `⚠️ Autoswitch: no spare profile below ${result.threshold || 95}%`;
+  if (result.reason) return `ℹ️ Autoswitch: ${result.reason}`;
+  return "✅ Autoswitch: no switch needed";
 }
 
 function statusText(status) {
   const profiles = Array.isArray(status.profiles) ? status.profiles : [];
   const route = asObject(status.route);
   const runtimeId = route.agentRuntime?.id || "pi";
-  const routeLine = route.ok
-    ? `Route: native Codex (${route.primaryModel}, runtime=codex)`
-    : `Route: needs native Codex runtime (current model=${route.primaryModel || "none"}, runtime=${runtimeId}). OAuth provider stays openai-codex; model route should be openai/* + runtime=codex.`;
+  const routeLine = route.legacyPiRoute
+    ? `✅ Route: OpenAI Codex · Pi\n🧠 Model: ${route.primaryModel}`
+    : route.nativeCodexRoute
+      ? `⚠️ Route: native Codex\n🧠 Model: ${route.primaryModel}\nExpected: openai-codex/* · Pi`
+      : `🛠 Route needs repair\nCurrent: ${route.primaryModel || "none"} · runtime=${runtimeId}\nExpected: openai-codex/* · Pi`;
   const rows = profiles.map((profile) => {
-    const marker = profile.active ? "*" : " ";
-    const email = profile.email || "unknown";
-    const exp = profile.expiresAt ? new Date(profile.expiresAt * 1000).toISOString().slice(0, 10) : "unknown exp";
+    const marker = profile.active ? "✅" : "▫️";
+    const exp = profile.expiresAt ? new Date(profile.expiresAt * 1000).toISOString().slice(0, 10) : "unknown";
     const refresh = profile.hasRefreshToken ? "refresh ok" : "no refresh token";
-    return `${marker} ${profile.slug} (${email}, ${exp}, ${refresh})`;
+    return [
+      `${marker} ${profile.slug}${profile.active ? " · active" : ""}`,
+      `🔐 ${refresh} · expires ${exp}`,
+      usageLine(status, profile.slug),
+    ].join("\n");
   });
   const pending = status.pendingDeviceAuth
-    ? "\n\nDevice auth pending. Open the auth link/code from the previous message, then press Check auth."
+    ? "\n\n🔑 Auth pending: open the link/code from the previous message, then press ✅ Check auth."
     : "";
-  return `GPT profile: ${status.active || "none"}\n${routeLine}\n\n${rows.length ? rows.join("\n") : "No profiles found in ~/.openclaw/codex-profiles."}${pending}`;
+  return [
+    `🤖 GPT profile: ${status.active || "none"}`,
+    routeLine,
+    "",
+    rows.length ? rows.join("\n\n") : "No profiles found in ~/.openclaw/codex-profiles.",
+    pending.trim(),
+  ].filter(Boolean).join("\n");
 }
 
 function scheduleRestart() {
@@ -163,20 +266,21 @@ function scheduleRestart() {
 
 async function handleCommand(config) {
   if (!config.enabled) return { text: "GPT profile switcher is disabled." };
+  const autoswitched = await managerJson({ ...config, timeoutMs: Math.min(config.timeoutMs || DEFAULT_TIMEOUT_MS, 8_000) }, ["autoswitch"]);
   const status = await managerJson(config, ["status"]);
   if (status.ok === false) return { text: `GPT profile status failed: ${status.error}` };
   return {
-    text: statusText(status),
+    text: `${autoswitchLine(autoswitched)}\n\n${statusText(status)}`,
     channelData: { telegram: { buttons: profileButtons(status) } },
   };
 }
 
-async function handleInboundClaim(event, config) {
-  const text = String(event?.messageText || event?.text || event?.content || "").trim();
+async function handleInboundClaim(event, context, config) {
+  const text = eventText(event) || eventText(context);
   const command = text.startsWith("/") ? text.slice(1).split(/\s+/, 1)[0].split("@", 1)[0].toLowerCase() : "";
   if (command !== "gptprof") return { handled: false };
   const reply = await handleCommand(config);
-  return { handled: true, reply };
+  return { handled: true, text: reply.text, channelData: reply.channelData, reply };
 }
 
 function commandPartsFromText(text) {
@@ -188,25 +292,35 @@ function commandPartsFromText(text) {
   return parts.slice(1);
 }
 
+function slashCommandFromText(text) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed.startsWith("/")) return "";
+  return trimmed.split(/\s+/, 1)[0].slice(1).split("@", 1)[0].toLowerCase();
+}
+
 function textOnlyStatus(status) {
-  return [
-    statusText(status),
-    "",
-    "Commands:",
-    "/gptprof add - start OpenAI device auth",
-    "/gptprof check - finish pending device auth",
-    "/gptprof use-native - apply openai/* + native Codex runtime",
-    "/gptprof switch <slug> - switch profile",
-  ].join("\n");
+  return statusText(status);
 }
 
 async function handleTextCommand(args, config) {
   const fastConfig = { ...config, timeoutMs: Math.min(config.timeoutMs || DEFAULT_TIMEOUT_MS, 12_000) };
   const action = String(args[0] || "status").toLowerCase();
   if (action === "status") {
+    await managerJson({ ...fastConfig, timeoutMs: 8_000 }, ["autoswitch"]);
     const status = await managerJson(fastConfig, ["status"]);
     if (status.ok === false) return `GPT profile status failed: ${status.error}`;
     return textOnlyStatus(status);
+  }
+  if (action === "refresh" || action === "usage") {
+    const usage = await managerJson(config, ["usage"]);
+    if (usage.ok === false) return `GPT profile usage refresh failed: ${usage.error}`;
+    const status = await managerJson(fastConfig, ["status"]);
+    return `${statusText(status)}\n\nUsage refreshed.`;
+  }
+  if (action === "autoswitch") {
+    const autoswitched = await managerJson({ ...config, timeoutMs: 8_000 }, ["autoswitch"]);
+    const status = await managerJson(fastConfig, ["status"]);
+    return `${autoswitchLine(autoswitched)}\n\n${statusText(status)}`;
   }
   if (action === "add" || action === "device-start") {
     const started = await managerJson(config, ["device-start"]);
@@ -236,13 +350,19 @@ async function handleTextCommand(args, config) {
       ].join("\n");
     }
     if (config.restartAfterSwitch) scheduleRestart();
-    return `Added and switched GPT profile to ${checked.active} (${checked.email}). Gateway restart scheduled.`;
+    return `Added and switched GPT profile to ${checked.active}. Gateway restart scheduled.`;
+  }
+  if (action === "use-pi" || action === "pi" || action === "route-pi") {
+    const routed = await managerJson(config, ["apply-pi-route"]);
+    if (routed.ok === false) return `OpenAI-Codex Pi route failed: ${routed.error}`;
+    if (config.restartAfterSwitch) scheduleRestart();
+    return "OpenAI-Codex Pi route applied. Gateway restart scheduled.";
   }
   if (action === "use-native" || action === "native" || action === "route-native") {
     const routed = await managerJson(config, ["apply-native-route"]);
     if (routed.ok === false) return `Native Codex route failed: ${routed.error}`;
     if (config.restartAfterSwitch) scheduleRestart();
-    return "Native Codex route applied. Gateway restart scheduled.";
+    return "Native Codex route applied as a manual non-base route. Gateway restart scheduled.";
   }
   if (action === "switch") {
     const slug = String(args[1] || "").trim().toLowerCase();
@@ -250,17 +370,25 @@ async function handleTextCommand(args, config) {
     const switched = await managerJson(config, ["switch", slug]);
     if (switched.ok === false) return `GPT profile switch failed: ${switched.error}`;
     if (config.restartAfterSwitch) scheduleRestart();
-    return `Switched GPT profile to ${switched.active} (${switched.email}). Gateway restart scheduled.`;
+    return `Switched GPT profile to ${switched.active}. Gateway restart scheduled.`;
   }
-  return "Usage: /gptprof [status|add|check|use-native|switch <slug>]";
+  return "Usage: /gptprof [status|add|check|use-pi|switch <slug>]";
 }
 
-async function handleBeforeDispatch(event, config) {
-  const text = String(event?.content || event?.body || "").trim();
+async function handleBeforeDispatch(event, context, config) {
+  const text = eventText(event) || eventText(context);
+  const command = slashCommandFromText(text);
+  if (command === "gptt") {
+    await managerJson({ ...config, timeoutMs: 8_000 }, ["autoswitch"]);
+    return { handled: false };
+  }
   const args = commandPartsFromText(text);
   if (!args) return { handled: false };
   if (!config.enabled) return { handled: true, text: "GPT profile switcher is disabled." };
-  return { handled: true, text: await handleTextCommand(args, config) };
+  const commandText = await handleTextCommand(args, config);
+  const status = await managerJson({ ...config, timeoutMs: Math.min(config.timeoutMs || DEFAULT_TIMEOUT_MS, 8_000) }, ["status"]);
+  const channelData = status.ok === false ? undefined : { telegram: { buttons: profileButtons(status) } };
+  return { handled: true, text: commandText, channelData, reply: { text: commandText, channelData } };
 }
 
 const GptProfToolSchema = Type.Object({
@@ -273,19 +401,22 @@ function createGptProfTool(config) {
   return {
     name: "gptprof",
     label: "GPT Profile",
-    description: "Manage OpenAI account profiles and native Codex runtime routing.",
+    description: "Manage OpenAI-Codex account profiles and the base Pi runtime route.",
     parameters: GptProfToolSchema,
     execute: async (_toolCallId, rawParams) => {
       const command = String(rawParams?.command || "").trim();
       const args = command ? command.split(/\s+/) : [];
       const text = await handleTextCommand(args, config);
-      return textResult(text, { ok: true, command: args });
+      const status = await managerJson({ ...config, timeoutMs: Math.min(config.timeoutMs || DEFAULT_TIMEOUT_MS, 8_000) }, ["status"]);
+      const channelData = status.ok === false ? undefined : { telegram: { buttons: profileButtons(status) } };
+      return textResult(text, { ok: true, command: args }, channelData);
     },
   };
 }
 
 async function handleInteractive(ctx, config) {
-  const slug = String(ctx?.callback?.payload || "").trim().toLowerCase();
+  let slug = String(ctx?.callback?.payload || "").trim().toLowerCase();
+  if (slug.startsWith("gptprof:")) slug = slug.slice("gptprof:".length);
   if (!slug || !/^[a-z0-9._-]+$/.test(slug)) {
     await ctx.respond?.editMessage?.({ text: "Bad GPT profile selection." });
     return { handled: true };
@@ -299,6 +430,30 @@ async function handleInteractive(ctx, config) {
     const status = await managerJson(config, ["status"]);
     await ctx.respond?.editMessage?.({ text: `Native Codex route applied.\nGateway restart scheduled.\n\n${statusText(status)}`, buttons: profileButtons(status) });
     if (config.restartAfterSwitch) scheduleRestart();
+    return { handled: true };
+  }
+  if (slug === "route-pi") {
+    const routed = await managerJson(config, ["apply-pi-route"]);
+    if (routed.ok === false) {
+      await ctx.respond?.editMessage?.({ text: `OpenAI-Codex Pi route failed: ${routed.error}` });
+      return { handled: true };
+    }
+    const status = await managerJson(config, ["status"]);
+    await ctx.respond?.editMessage?.({ text: `OpenAI-Codex Pi route applied.\nGateway restart scheduled.\n\n${statusText(status)}`, buttons: profileButtons(status) });
+    if (config.restartAfterSwitch) scheduleRestart();
+    return { handled: true };
+  }
+  if (slug === "refresh") {
+    const usage = await managerJson(config, ["usage"]);
+    const status = await managerJson(config, ["status"]);
+    const prefix = usage.ok === false ? `Usage refresh failed: ${usage.error}` : "Usage refreshed.";
+    await ctx.respond?.editMessage?.({ text: `${prefix}\n\n${statusText(status)}`, buttons: profileButtons(status) });
+    return { handled: true };
+  }
+  if (slug === "autoswitch") {
+    const autoswitched = await managerJson({ ...config, timeoutMs: 8_000 }, ["autoswitch"]);
+    const status = await managerJson(config, ["status"]);
+    await ctx.respond?.editMessage?.({ text: `${autoswitchLine(autoswitched)}\n\n${statusText(status)}`, buttons: profileButtons(status) });
     return { handled: true };
   }
   if (slug === "device-start") {
@@ -341,8 +496,28 @@ async function handleInteractive(ctx, config) {
       return { handled: true };
     }
     const status = await managerJson(config, ["status"]);
-    await ctx.respond?.editMessage?.({ text: `Added and switched GPT profile to ${checked.active} (${checked.email}).\nGateway restart scheduled.\n\n${statusText(status)}`, buttons: profileButtons(status) });
+    await ctx.respond?.editMessage?.({ text: `Added and switched GPT profile to ${checked.active}.\nGateway restart scheduled.\n\n${statusText(status)}`, buttons: profileButtons(status) });
     if (config.restartAfterSwitch) scheduleRestart();
+    return { handled: true };
+  }
+  const before = await managerJson(config, ["status"]);
+  if (before.ok === false) {
+    await ctx.respond?.editMessage?.({ text: `GPT profile status failed: ${before.error}` });
+    return { handled: true };
+  }
+  if (slug === before.active) {
+    await ctx.respond?.editMessage?.({ text: `Already using GPT profile ${slug}.\n\n${statusText(before)}`, buttons: profileButtons(before) });
+    return { handled: true };
+  }
+  if (profileUsageOverThreshold(before, slug)) {
+    const usage = Math.round(profileUsageMax(before, slug));
+    const text = [
+      `Not switching to ${slug}: usage is already ${usage}%.`,
+      "Autoswitch threshold is 95%, so that profile would be switched away again before use.",
+      "",
+      statusText(before),
+    ].join("\n");
+    await ctx.respond?.editMessage?.({ text, buttons: profileButtons(before) });
     return { handled: true };
   }
   const switched = await managerJson(config, ["switch", slug]);
@@ -351,7 +526,7 @@ async function handleInteractive(ctx, config) {
     return { handled: true };
   }
   const status = await managerJson(config, ["status"]);
-  const text = `Switched GPT profile to ${switched.active} (${switched.email}).\nGateway restart scheduled so every agent reloads auth state.\n\n${statusText(status)}`;
+  const text = `Switched GPT profile to ${switched.active}.\nGateway restart scheduled so every agent reloads auth state.\n\n${statusText(status)}`;
   await ctx.respond?.editMessage?.({ text, buttons: profileButtons(status) });
   if (config.restartAfterSwitch) scheduleRestart();
   return { handled: true };
@@ -360,7 +535,7 @@ async function handleInteractive(ctx, config) {
 const plugin = {
   id: "codex-profile-switcher",
   name: "GPT Profile Switcher",
-  description: "Telegram /gptprof buttons for OpenAI account profiles and native Codex runtime routing.",
+  description: "Telegram /gptprof buttons for OpenAI-Codex account profiles and the base Pi runtime route.",
   register(api) {
     const config = getConfig(api);
     if (typeof api.registerTool === "function") {
@@ -368,7 +543,7 @@ const plugin = {
     }
     api.registerCommand({
       name: "gptprof",
-      description: "Switch OpenAI account profiles and keep OpenClaw on openai/* with native Codex runtime.",
+      description: "Switch OpenAI-Codex account profiles and keep OpenClaw on openai-codex/* with Pi runtime.",
       acceptsArgs: false,
       handler: async () => await handleCommand(config),
     });
@@ -380,12 +555,12 @@ const plugin = {
       });
     }
     if (typeof api.on === "function") {
-      api.on("inbound_claim", async (event) => await handleInboundClaim(event, config));
-      api.on("before_dispatch", async (event) => await handleBeforeDispatch(event, config));
+      api.on("inbound_claim", async (event, context) => await handleInboundClaim(event, context, config), { priority: 900 });
+      api.on("before_dispatch", async (event, context) => await handleBeforeDispatch(event, context, config), { priority: 900 });
     } else if (typeof api.registerHook === "function") {
       api.registerHook(
         "inbound_claim",
-        async (event) => await handleInboundClaim(event, config),
+        async (event, context) => await handleInboundClaim(event, context, config),
         {
           name: "gpt-profile-switcher-inbound-claim",
           description: "Route Telegram /gptprof to GPT profile switcher.",
@@ -393,7 +568,7 @@ const plugin = {
       );
       api.registerHook(
         "before_dispatch",
-        async (event) => await handleBeforeDispatch(event, config),
+        async (event, context) => await handleBeforeDispatch(event, context, config),
         {
           name: "gpt-profile-switcher-before-dispatch",
           description: "Handle Telegram /gptprof before agent dispatch.",

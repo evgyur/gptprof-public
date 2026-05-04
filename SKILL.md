@@ -1,6 +1,6 @@
 ---
 name: gptprof-public
-description: Public sanitized GPT profile manager for OpenClaw: switch OpenAI Codex OAuth profiles and enforce native Codex runtime routing without storing secrets in the skill.
+description: Public sanitized GPT profile manager for OpenClaw: switch OpenAI Codex OAuth profiles, show usage, and keep the base OpenAI Codex Pi route without storing secrets in the skill.
 user-invocable: true
 disable-model-invocation: true
 command-dispatch: tool
@@ -10,27 +10,39 @@ command-arg-mode: raw
 
 # gptprof-public
 
-Manage local OpenAI Codex OAuth profiles for OpenClaw and keep GPT models on the native Codex runtime.
+Manage local OpenAI Codex OAuth profiles for OpenClaw and keep GPT traffic on the base OpenAI Codex Pi route.
 
-## What it does
+## What It Does
 
-- `/gptprof` or `/gptprof status` shows the active profile and route status.
+- `/gptprof` or `/gptprof status` shows the active profile, route status, cached usage, and Telegram profile buttons.
 - `/gptprof add` starts OpenAI device authorization.
 - `/gptprof check` completes pending device authorization after the user approves it.
-- `/gptprof use-native` sets `agents.defaults.model.primary` to `openai/gpt-5.5` and `agents.defaults.agentRuntime.id` to `codex`.
-- `/gptprof switch <slug>` switches to an existing local profile.
+- `/gptprof refresh` refreshes usage cache on demand.
+- `/gptprof autoswitch` switches only when the active profile is at or above the 95% usage threshold and a healthy spare profile is below threshold.
+- `/gptprof use-pi` sets `agents.defaults.model.primary` to `openai-codex/gpt-5.5` and `agents.defaults.agentRuntime.id` to `pi`.
+- `/gptprof switch <slug>` switches to an existing local profile unless the selected profile is already over the autoswitch threshold.
 
-## Important routing distinction
+## Important Routing Distinction
 
 Auth records use provider `openai-codex` because the OAuth token is for ChatGPT/Codex auth.
-Execution should use native Codex routing:
+The base route expected by this public skill is:
 
-- model: `openai/*`, for example `openai/gpt-5.5`
-- runtime: `agentRuntime.id = "codex"`
+- model: `openai-codex/gpt-5.5`
+- runtime: `agentRuntime.id = "pi"`
 
-A legacy `openai-codex/*` model on Pi runtime is detected as a legacy/fallback route and reported as `needs native Codex`.
+On OpenClaw `2026.5.3-beta.2`, do not write `agents.defaults.agentRuntime.fallback`; config validation rejects that key for this route.
 
-## Secret policy
+## Telegram Buttons
+
+Buttons should be native Telegram rows:
+
+```json
+[[{"text":"✓ profile 42%","callback_data":"gptprof:profile"}]]
+```
+
+Do not use abstract `{label,value}` buttons, do not include `style`, and do not pass a flat button list in this OpenClaw delivery path.
+
+## Secret Policy
 
 This public skill contains no tokens and should never commit tokens.
 Runtime secrets stay in user-local files only:

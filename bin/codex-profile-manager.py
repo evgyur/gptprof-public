@@ -32,7 +32,10 @@ DEVICE_VERIFY_URL = f"{AUTH_BASE_URL}/codex/device"
 DEVICE_TIMEOUT_SECONDS = 15 * 60
 REFRESH_AFTER_DAYS = 8
 SWITCH_THRESHOLD = 95.0
+USAGE_CACHE_MAX_AGE_SECONDS = 15 * 60
+USAGE_HTTP_TIMEOUT_SECONDS = 6
 DEFAULT_NATIVE_MODEL = "openai/gpt-5.5"
+DEFAULT_PI_MODEL = "openai-codex/gpt-5.5"
 NATIVE_MODEL_ALIASES = {
     "openai/gpt-5.5": "gptt",
     "openai/gpt-5.4-mini": "gptm",
@@ -116,6 +119,7 @@ def load_state():
     state.setdefault("active", None)
     state.setdefault("history", [])
     state.setdefault("cooldowns", {})
+    state.setdefault("usageCache", {})
     return state
 
 
@@ -150,6 +154,127 @@ def list_profiles():
     return profiles
 
 
+def parse_ts(value):
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def cache_age_seconds(entry):
+    ts = parse_ts((entry or {}).get("fetchedAt"))
+    if ts is None:
+        return None
+    return max(0, int(time.time() - ts))
+
+
+def usage_window_name(window, fallback):
+    seconds = (window or {}).get("limit_window_seconds")
+    if isinstance(seconds, (int, float)):
+        if seconds <= 6 * 60 * 60:
+            return "fiveHour"
+        if seconds >= 6 * 24 * 60 * 60:
+            return "weekly"
+    return fallback
+
+
+def normalize_usage(slug, payload):
+    rl = payload.get("rate_limit") if isinstance(payload, dict) else {}
+    primary = (rl or {}).get("primary_window") or {}
+    secondary = (rl or {}).get("secondary_window") or {}
+    windows = {}
+    for fallback, raw in (("primary", primary), ("secondary", secondary)):
+        if not isinstance(raw, dict):
+            continue
+        name = usage_window_name(raw, fallback)
+        windows[name] = {
+            "usedPercent": raw.get("used_percent"),
+            "resetAt": raw.get("reset_at"),
+            "windowSeconds": raw.get("limit_window_seconds"),
+        }
+    return {
+        "slug": slug,
+        "ok": True,
+        "primaryUsed": primary.get("used_percent"),
+        "primaryResetAt": primary.get("reset_at"),
+        "primaryWindowSeconds": primary.get("limit_window_seconds"),
+        "secondaryUsed": secondary.get("used_percent"),
+        "secondaryResetAt": secondary.get("reset_at"),
+        "secondaryWindowSeconds": secondary.get("limit_window_seconds"),
+        "windows": windows,
+        "planType": payload.get("plan_type") if isinstance(payload, dict) else None,
+    }
+
+
+def usage_is_over_threshold(usage):
+    windows = usage.get("windows") if isinstance(usage, dict) else {}
+    if isinstance(windows, dict):
+        for name in ("fiveHour", "weekly", "primary", "secondary"):
+            used = (windows.get(name) or {}).get("usedPercent")
+            if isinstance(used, (int, float)) and used >= SWITCH_THRESHOLD:
+                return True
+    for key in ("primaryUsed", "secondaryUsed"):
+        used = usage.get(key) if isinstance(usage, dict) else None
+        if isinstance(used, (int, float)) and used >= SWITCH_THRESHOLD:
+            return True
+    return False
+
+
+def usage_below_threshold(usage):
+    return bool(usage.get("ok")) and not usage_is_over_threshold(usage)
+
+
+def cached_usage(slug, max_age=USAGE_CACHE_MAX_AGE_SECONDS):
+    state = load_state()
+    cache = state.get("usageCache") if isinstance(state.get("usageCache"), dict) else {}
+    entry = cache.get(slug) if isinstance(cache.get(slug), dict) else None
+    if not entry or not isinstance(entry.get("usage"), dict):
+        return None
+    age = cache_age_seconds(entry)
+    if age is None or age > max_age:
+        return None
+    usage = dict(entry["usage"])
+    usage["cache"] = {"hit": True, "fresh": True, "ageSeconds": age, "fetchedAt": entry.get("fetchedAt")}
+    return usage
+
+
+def remember_usage(slug, usage=None, error=None):
+    state = load_state()
+    cache = state.get("usageCache") if isinstance(state.get("usageCache"), dict) else {}
+    entry = cache.get(slug) if isinstance(cache.get(slug), dict) else {}
+    if usage is not None:
+        entry["usage"] = usage
+        entry["fetchedAt"] = now_iso()
+        entry.pop("lastError", None)
+    if error is not None:
+        entry["lastError"] = error
+        entry["lastErrorAt"] = now_iso()
+    cache[slug] = entry
+    state["usageCache"] = cache
+    save_state(state)
+
+
+def usage_cache_summary():
+    state = load_state()
+    cache = state.get("usageCache") if isinstance(state.get("usageCache"), dict) else {}
+    out = {}
+    for slug, entry in cache.items():
+        if not isinstance(entry, dict):
+            continue
+        age = cache_age_seconds(entry)
+        out[slug] = {
+            "usage": entry.get("usage") if isinstance(entry.get("usage"), dict) else None,
+            "fetchedAt": entry.get("fetchedAt"),
+            "ageSeconds": age,
+            "fresh": isinstance(age, int) and age <= USAGE_CACHE_MAX_AGE_SECONDS,
+            "lastError": entry.get("lastError"),
+            "lastErrorAt": entry.get("lastErrorAt"),
+        }
+    return out
+
+
 def native_route_status():
     cfg = load_json(OPENCLAW_CONFIG, {}) or {}
     agents = cfg.get("agents") if isinstance(cfg.get("agents"), dict) else {}
@@ -162,38 +287,112 @@ def native_route_status():
     codex_entry = entries.get("codex") if isinstance(entries.get("codex"), dict) else {}
     primary = model.get("primary") if isinstance(model.get("primary"), str) else None
     runtime_id = runtime.get("id") if isinstance(runtime.get("id"), str) else None
-    runtime_fallback = runtime.get("fallback") if isinstance(runtime.get("fallback"), str) else None
     auth_provider = "openai-codex"
-    legacy_pi_route = isinstance(primary, str) and primary.startswith("openai-codex/") and runtime_id != "codex"
-    ok = (
+    native_codex_route = (
         isinstance(primary, str)
         and primary.startswith("openai/")
         and runtime_id == "codex"
         and "codex" in allow
         and codex_entry.get("enabled") is True
     )
+    legacy_pi_route = (
+        isinstance(primary, str)
+        and primary.startswith("openai-codex/")
+        and runtime_id == "pi"
+    )
+    ok = legacy_pi_route
     needs = []
-    if not isinstance(primary, str) or not primary.startswith("openai/"):
-        needs.append("model.primary must be openai/* for native Codex runtime")
-    if runtime_id != "codex":
-        needs.append("agentRuntime.id must be codex")
-    if "codex" not in allow:
-        needs.append("plugins.allow must include codex")
-    if codex_entry.get("enabled") is not True:
-        needs.append("plugins.entries.codex.enabled must be true")
+    if not ok:
+        if not isinstance(primary, str) or not primary.startswith("openai-codex/"):
+            needs.append("model.primary must be openai-codex/* for the base PI route")
+        if runtime_id != "pi":
+            needs.append("agentRuntime.id must be pi for the base route")
     return {
         "ok": ok,
         "primaryModel": primary,
         "agentRuntime": runtime,
         "codexAllowed": "codex" in allow,
         "codexPluginEnabled": codex_entry.get("enabled") is True,
-        "fallback": runtime_fallback,
+        "fallback": runtime.get("fallback") if isinstance(runtime.get("fallback"), str) else None,
         "authProvider": auth_provider,
-        "expectedModelPrefix": "openai/",
-        "expectedRuntime": "codex",
+        "routeMode": "legacy-pi" if legacy_pi_route else ("native-codex" if native_codex_route else "invalid"),
+        "expectedModelPrefix": "openai-codex/",
+        "expectedRuntime": "pi",
         "legacyPiRoute": legacy_pi_route,
+        "nativeCodexRoute": native_codex_route,
         "needs": needs,
     }
+
+
+def ensure_openai_codex_pi_route(model=None, reason="manual"):
+    model = (model or DEFAULT_PI_MODEL).strip()
+    if not model.startswith("openai-codex/"):
+        raise RuntimeError("base PI route requires an openai-codex/* model ref")
+    cfg = load_json(OPENCLAW_CONFIG, {}) or {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    backup_path(OPENCLAW_CONFIG, stamp)
+
+    plugins = cfg.setdefault("plugins", {})
+    if not isinstance(plugins, dict):
+        plugins = {}
+        cfg["plugins"] = plugins
+    allow = plugins.get("allow")
+    if not isinstance(allow, list):
+        allow = []
+    for plugin_id in ("openai", "codex", "codex-profile-switcher"):
+        if plugin_id not in allow:
+            allow.append(plugin_id)
+    plugins["allow"] = allow
+    entries = plugins.get("entries")
+    if not isinstance(entries, dict):
+        entries = {}
+    entries.setdefault("codex", {})
+    if isinstance(entries["codex"], dict):
+        entries["codex"]["enabled"] = True
+    plugins["entries"] = entries
+
+    agents = cfg.setdefault("agents", {})
+    if not isinstance(agents, dict):
+        agents = {}
+        cfg["agents"] = agents
+    defaults = agents.setdefault("defaults", {})
+    if not isinstance(defaults, dict):
+        defaults = {}
+        agents["defaults"] = defaults
+    default_model = defaults.get("model")
+    if not isinstance(default_model, dict):
+        default_model = {}
+    default_model["primary"] = model
+    default_model["fallbacks"] = []
+    defaults["model"] = default_model
+    defaults["agentRuntime"] = {"id": "pi"}
+
+    models = defaults.get("models")
+    if not isinstance(models, dict):
+        models = {}
+    pi_entry = models.get(model)
+    if not isinstance(pi_entry, dict):
+        pi_entry = {}
+    pi_entry["alias"] = "gptt"
+    params = pi_entry.get("params") if isinstance(pi_entry.get("params"), dict) else {}
+    params.setdefault("transport", "auto")
+    pi_entry["params"] = params
+    models[model] = pi_entry
+    native_entry = models.get(DEFAULT_NATIVE_MODEL)
+    if isinstance(native_entry, dict) and native_entry.get("alias") == "gptt":
+        native_entry["alias"] = "gptt-native"
+    defaults["models"] = models
+
+    write_json_atomic(OPENCLAW_CONFIG, cfg, mode=0o600)
+    state = load_state()
+    hist = state.get("routeHistory") if isinstance(state.get("routeHistory"), list) else []
+    hist.append({"at": now_iso(), "model": model, "runtime": "pi", "reason": reason})
+    state["routeHistory"] = hist[-100:]
+    state["baseRoute"] = {"model": model, "runtime": "pi", "updatedAt": now_iso()}
+    save_state(state)
+    return {"ok": True, "model": model, "status": native_route_status(), "backupStamp": stamp}
 
 
 def ensure_native_codex_route(model=None, reason="manual"):
@@ -244,7 +443,7 @@ def ensure_native_codex_route(model=None, reason="manual"):
     if isinstance(previous_fallbacks, list) and previous_fallbacks:
         default_model["fallbacks"] = []
     defaults["model"] = default_model
-    defaults["agentRuntime"] = {"id": "codex", "fallback": "none"}
+    defaults["agentRuntime"] = {"id": "codex"}
 
     models = defaults.get("models")
     if not isinstance(models, dict):
@@ -434,7 +633,7 @@ def switch_profile(slug, reason="manual"):
     hist.append({"at": now_iso(), "from": old, "to": slug, "reason": reason})
     state["history"] = hist[-100:]
     save_state(state)
-    route = ensure_native_codex_route(reason=f"profile-switch:{reason}")
+    route = native_route_status()
     return {"ok": True, "active": slug, "email": email, "profileId": f"openai-codex:{email}", "changed": changed, "backupStamp": stamp, "route": route}
 
 
@@ -633,7 +832,7 @@ def refresh_one(slug, force=False):
     return {"slug": slug, "ok": True, "email": auth.get("email"), "expiresAt": token_exp_ms(auth)}
 
 
-def fetch_usage(slug):
+def fetch_usage(slug, timeout=USAGE_HTTP_TIMEOUT_SECONDS):
     auth = load_json(profile_auth_path(slug), None)
     if not isinstance(auth, dict):
         return {"slug": slug, "ok": False, "error": "profile_not_found"}
@@ -646,41 +845,54 @@ def fetch_usage(slug):
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     if account_id and not str(account_id).startswith(("email_", "local_")):
         headers["chatgpt-account-id"] = str(account_id)
-    status, payload = http_json(USAGE_BASE_URL, None, headers=headers, timeout=20)
+    status, payload = http_json(USAGE_BASE_URL, None, headers=headers, timeout=timeout)
     if status >= 400:
         code, msg = extract_error(payload)
-        return {"slug": slug, "ok": False, "error": code or f"http_{status}", "message": msg}
-    rl = payload.get("rate_limit") if isinstance(payload, dict) else {}
-    primary = (rl or {}).get("primary_window") or {}
-    secondary = (rl or {}).get("secondary_window") or {}
-    return {"slug": slug, "ok": True, "primaryUsed": primary.get("used_percent"), "primaryResetAt": primary.get("reset_at"), "primaryWindowSeconds": primary.get("limit_window_seconds"), "secondaryUsed": secondary.get("used_percent"), "secondaryResetAt": secondary.get("reset_at"), "planType": payload.get("plan_type")}
+        out = {"slug": slug, "ok": False, "error": code or f"http_{status}", "message": msg}
+        remember_usage(slug, error=out)
+        return out
+    out = normalize_usage(slug, payload)
+    remember_usage(slug, usage=out)
+    out["cache"] = {"hit": False, "fresh": True, "ageSeconds": 0, "fetchedAt": now_iso()}
+    return out
 
 
-def autoswitch():
+def get_usage(slug, force=False, max_age=USAGE_CACHE_MAX_AGE_SECONDS, timeout=USAGE_HTTP_TIMEOUT_SECONDS):
+    if not force:
+        cached = cached_usage(slug, max_age=max_age)
+        if cached:
+            return cached
+    try:
+        return fetch_usage(slug, timeout=timeout)
+    except Exception as e:
+        out = {"slug": slug, "ok": False, "error": "usage_fetch_failed", "message": str(e)}
+        remember_usage(slug, error=out)
+        return out
+
+
+def autoswitch(force=False):
     ensure_seed_current()
     state = load_state()
     active = state.get("active")
     profiles = [p["slug"] for p in list_profiles()]
     if not active or active not in profiles:
         return {"ok": False, "error": "no_active_profile", "profiles": profiles}
-    active_usage = fetch_usage(active)
+    active_usage = get_usage(active, force=force)
     if not active_usage.get("ok"):
-        return {"ok": False, "active": active, "usage": active_usage}
-    primary = active_usage.get("primaryUsed")
-    secondary = active_usage.get("secondaryUsed")
-    if not ((isinstance(primary, (int, float)) and primary >= SWITCH_THRESHOLD) or (isinstance(secondary, (int, float)) and secondary >= SWITCH_THRESHOLD)):
-        return {"ok": True, "switched": False, "active": active, "usage": active_usage}
+        return {"ok": False, "switched": False, "active": active, "reason": "usage_unavailable", "usage": active_usage}
+    if not usage_is_over_threshold(active_usage):
+        return {"ok": True, "switched": False, "active": active, "reason": "below_threshold", "usage": active_usage, "threshold": SWITCH_THRESHOLD}
     checked = []
     for slug in profiles:
         if slug == active:
             continue
         refresh_one(slug, force=False)
-        usage = fetch_usage(slug)
+        usage = get_usage(slug, force=force)
         checked.append(usage)
-        if usage.get("ok") and (usage.get("primaryUsed") is None or usage.get("primaryUsed") < SWITCH_THRESHOLD) and (usage.get("secondaryUsed") is None or usage.get("secondaryUsed") < SWITCH_THRESHOLD):
+        if usage_below_threshold(usage):
             result = switch_profile(slug, reason="autoswitch-usage-95")
-            return {"ok": True, "switched": True, "from": active, "to": slug, "activeUsage": active_usage, "candidateUsage": usage, "switch": result}
-    return {"ok": True, "switched": False, "active": active, "reason": "no_healthy_candidate", "usage": active_usage, "checked": checked}
+            return {"ok": True, "switched": True, "from": active, "to": slug, "activeUsage": active_usage, "candidateUsage": usage, "switch": result, "threshold": SWITCH_THRESHOLD}
+    return {"ok": True, "switched": False, "active": active, "reason": "no_healthy_candidate", "usage": active_usage, "checked": checked, "threshold": SWITCH_THRESHOLD}
 
 
 def restart_gateway(delay=1):
@@ -700,6 +912,7 @@ def main():
     sub.add_parser("usage")
     sub.add_parser("autoswitch")
     route = sub.add_parser("apply-native-route"); route.add_argument("--model", default=DEFAULT_NATIVE_MODEL)
+    pi_route = sub.add_parser("apply-pi-route"); pi_route.add_argument("--model", default=DEFAULT_PI_MODEL)
     sub.add_parser("device-start")
     sub.add_parser("device-check")
     args = parser.parse_args()
@@ -714,6 +927,14 @@ def main():
                 "active": state.get("active"),
                 "profiles": list_profiles(),
                 "route": native_route_status(),
+                "usage": usage_cache_summary(),
+                "autoswitchPolicy": {
+                    "thresholdPercent": SWITCH_THRESHOLD,
+                    "cacheMaxAgeSeconds": USAGE_CACHE_MAX_AGE_SECONDS,
+                    "httpTimeoutSeconds": USAGE_HTTP_TIMEOUT_SECONDS,
+                    "mode": "lazy-on-demand",
+                    "timer": False,
+                },
                 "pendingDeviceAuth": state.get("pendingDeviceAuth") if isinstance(state.get("pendingDeviceAuth"), dict) else None,
             }
         elif args.cmd == "switch":
@@ -728,11 +949,13 @@ def main():
             out = {"ok": True, "results": [refresh_one(s, force=args.force) for s in slugs if s]}
         elif args.cmd == "usage":
             ensure_seed_current()
-            out = {"ok": True, "results": [fetch_usage(p["slug"]) for p in list_profiles()]}
+            out = {"ok": True, "results": [get_usage(p["slug"], force=True) for p in list_profiles()]}
         elif args.cmd == "autoswitch":
             out = autoswitch()
         elif args.cmd == "apply-native-route":
             out = ensure_native_codex_route(model=args.model, reason="manual")
+        elif args.cmd == "apply-pi-route":
+            out = ensure_openai_codex_pi_route(model=args.model, reason="manual")
         elif args.cmd == "device-start":
             out = device_start()
         elif args.cmd == "device-check":

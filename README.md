@@ -1,33 +1,30 @@
 # gptprof-public
 
-Sanitized public OpenClaw skill/plugin for managing OpenAI Codex OAuth profiles and keeping GPT traffic on the native Codex runtime.
+Sanitized public OpenClaw skill/plugin for managing OpenAI Codex OAuth profiles, GPT profile buttons, and lazy usage-based profile switching.
 
-Русская версия — ниже.
+Русская версия - ниже.
 
 ---
 
-# ENGLISH
+# English
 
-## What this skill is for
+## What This Skill Is For
 
-`gptprof-public` solves a specific OpenClaw operational problem: you may have several ChatGPT/OpenAI Codex OAuth accounts, but OpenClaw needs a reliable way to switch between them and verify that GPT models run through the correct native Codex runtime.
+`gptprof-public` manages several local ChatGPT/OpenAI Codex OAuth profiles for OpenClaw. It lets an operator add profiles, switch between them, show usage for the 5-hour and weekly windows, and keep the base GPT route on OpenAI Codex through the Pi runtime.
 
-Without a dedicated profile manager, it is easy to end up in a broken state. The model route uses `openai-codex/gpt-*` instead of `openai/*`. The execution runtime stays on Pi instead of switching to native Codex. Agents keep using stale auth files after a manual switch. Sessions do not reload auth state after a new account is authorized. The `/gptprof status` command makes these states visible and provides commands to fix them.
+The intended base route in this public version is:
 
-## The key distinction
+- auth provider: `openai-codex`
+- model: `openai-codex/gpt-5.5`
+- runtime: `agents.defaults.agentRuntime.id = "pi"`
 
-This is the most important concept in this skill:
+This repo contains code only. It does not include tokens, account IDs, local auth state, or machine-specific profile data.
 
-- Auth provider: `openai-codex` (OAuth token is for ChatGPT/Codex auth)
-- Correct execution route: model `openai/*` + `agentRuntime.id = "codex"`
+## Main Use Cases
 
-The OAuth profile remains an OpenAI Codex profile. This does not mean the model route should stay on `openai-codex/*` with Pi runtime. `/gptprof status` explicitly detects the old Pi route and flags it as `needs native Codex`.
+### Check the active profile
 
-## Main use cases
-
-### Check the active GPT account
-
-```
+```text
 /gptprof
 /gptprof status
 ```
@@ -35,38 +32,66 @@ The OAuth profile remains an OpenAI Codex profile. This does not mean the model 
 Shows:
 
 - active local profile slug
-- email attached to each profile
-- refresh-token availability
+- route status
+- token refresh availability
 - token expiry date when available
-- whether the current OpenClaw route is native Codex
-- whether device authorization is pending
+- cached 5-hour and weekly usage
+- Telegram inline buttons for profile switching and auth actions
+
+Profile email addresses are intentionally not shown in the compact Telegram status because profile slugs are usually enough for day-to-day switching.
 
 ### Add a new OpenAI Codex OAuth profile
 
-```
+```text
 /gptprof add
 ```
 
-Starts OpenAI device authorization and returns a verification URL, user code, and expiration window. After approving in the browser, run:
+Starts OpenAI device authorization and returns a verification URL, user code, and expiration window. After approving in the browser:
 
-```
+```text
 /gptprof check
 ```
 
-The manager exchanges the authorization code for tokens, stores them in the local profile pool, switches OpenClaw to the new profile, updates agent auth files, and schedules a gateway restart if enabled.
+The manager exchanges the device code for tokens, stores them in the local profile pool, switches OpenClaw to the new profile, updates agent auth files, updates session auth overrides, and schedules a gateway restart if enabled.
 
 ### Switch between existing profiles
 
-```
+```text
 /gptprof switch <slug>
 ```
 
-Copies the selected local profile into the active Codex auth location, updates OpenClaw agent auth records, updates session profile overrides, and reapplies the native Codex route.
+Copies the selected local profile into the active Codex auth location, updates OpenClaw agent auth records, updates session profile overrides, and keeps the base Pi route applied.
 
-### Force native Codex routing
+In Telegram, profile buttons use native inline keyboard rows:
 
+```json
+[[{"text":"✓ work 42%","callback_data":"gptprof:work"}]]
 ```
-/gptprof use-native
+
+For OpenClaw `2026.5.3-beta.2`, avoid abstract button fields such as `label` / `value`, avoid `style`, and avoid a flat button list. Telegram expects native `text` / `callback_data`, and this OpenClaw delivery path expects rows.
+
+### Refresh usage
+
+```text
+/gptprof refresh
+```
+
+Fetches usage for known profiles and caches it in local state. Usage checks are lazy and bounded; this skill does not install a timer, cron job, daemon, or polling loop.
+
+### Autoswitch
+
+```text
+/gptprof autoswitch
+```
+
+Switches only when the active profile has either its 5-hour or weekly usage window at `>=95%`, and another healthy profile is below `95%` for both windows.
+
+If the target profile is already over threshold, the Telegram button shows a warning marker and the callback explains why it is not switching. This avoids the confusing case where a manual switch succeeds and the next `/gptprof` or `/gptt` immediately switches away again.
+
+### Apply the base Pi route
+
+```text
+/gptprof use-pi
 ```
 
 Sets OpenClaw defaults to:
@@ -75,20 +100,45 @@ Sets OpenClaw defaults to:
 {
   "agents": {
     "defaults": {
-      "model": { "primary": "openai/gpt-5.5" },
-      "agentRuntime": { "id": "codex", "fallback": "none" }
+      "model": { "primary": "openai-codex/gpt-5.5", "fallbacks": [] },
+      "agentRuntime": { "id": "pi" }
     }
   }
 }
 ```
 
-Also ensures the `codex` plugin is enabled and allowed.
+OpenClaw `2026.5.3-beta.2` rejects `agents.defaults.agentRuntime.fallback`; do not write that key for this route.
 
-## Secret policy
+## Commands
 
-This repository is public-safe by design. It does not contain OAuth tokens, refresh tokens, access tokens, account IDs, or user auth state. Runtime secrets are stored only on the user's machine:
-
+```text
+/gptprof
+/gptprof status
+/gptprof add
+/gptprof check
+/gptprof refresh
+/gptprof autoswitch
+/gptprof use-pi
+/gptprof switch <slug>
 ```
+
+The manager CLI also works directly:
+
+```bash
+python3 ~/.local/bin/codex-profile-manager.py status
+python3 ~/.local/bin/codex-profile-manager.py device-start
+python3 ~/.local/bin/codex-profile-manager.py device-check
+python3 ~/.local/bin/codex-profile-manager.py usage
+python3 ~/.local/bin/codex-profile-manager.py autoswitch
+python3 ~/.local/bin/codex-profile-manager.py apply-pi-route
+python3 ~/.local/bin/codex-profile-manager.py switch <slug>
+```
+
+## Secret Policy
+
+This repository is public-safe by design. It does not contain OAuth tokens, refresh tokens, access tokens, account IDs, or user auth state. Runtime secrets stay only on the user's machine:
+
+```text
 ~/.codex/auth.json
 ~/.openclaw/codex-profiles/*/auth.json
 ~/.openclaw/agents/*/agent/auth-*.json
@@ -96,16 +146,16 @@ This repository is public-safe by design. It does not contain OAuth tokens, refr
 
 These paths must never be committed. The OAuth client ID used by the manager is public application metadata, not a client secret.
 
-## Repository layout
+## Repository Layout
 
-```
+```text
 SKILL.md                         OpenClaw skill metadata and usage notes
 plugin/                          OpenClaw extension for /gptprof command handling
 plugin/index.js                  Telegram/tool command bridge
 plugin/openclaw.plugin.json      Plugin manifest
 plugin/package.json              Plugin package metadata
 bin/codex-profile-manager.py     Local profile manager CLI
-tests/smoke.sh                  Syntax + secret-pattern smoke test
+tests/smoke.sh                   Syntax + secret-pattern smoke test
 ```
 
 ## Install
@@ -133,28 +183,7 @@ Then enable the extension in OpenClaw config and allow the required plugins:
 
 Exact config shape may differ by OpenClaw installation.
 
-## Commands
-
-```
-/gptprof
-/gptprof status
-/gptprof add
-/gptprof check
-/gptprof use-native
-/gptprof switch <slug>
-```
-
-The manager CLI also works directly:
-
-```bash
-python3 ~/.local/bin/codex-profile-manager.py status
-python3 ~/.local/bin/codex-profile-manager.py device-start
-python3 ~/.local/bin/codex-profile-manager.py device-check
-python3 ~/.local/bin/codex-profile-manager.py switch <slug>
-python3 ~/.local/bin/codex-profile-manager.py apply-native-route
-```
-
-## Safety checks
+## Safety Checks
 
 ```bash
 bash tests/smoke.sh
@@ -162,7 +191,7 @@ bash tests/smoke.sh
 
 The smoke test checks JavaScript syntax, Python syntax, and obvious committed-token patterns.
 
-## What this skill does not do
+## What This Skill Does Not Do
 
 - It does not bypass OpenAI limits.
 - It does not create paid accounts.
@@ -172,28 +201,25 @@ The smoke test checks JavaScript syntax, Python syntax, and obvious committed-to
 
 ---
 
-# РУССКИЙ
+# Русский
 
-## Зачем нужен этот скилл
+## Зачем Нужен Этот Скилл
 
-`gptprof-public` решает конкретную операционную проблему OpenClaw: у пользователя может быть несколько ChatGPT/OpenAI Codex OAuth-аккаунтов, а OpenClaw должен уметь переключаться между ними и проверять, что GPT-модели идут через правильный native Codex runtime.
+`gptprof-public` управляет несколькими локальными ChatGPT/OpenAI Codex OAuth-профилями для OpenClaw. Он добавляет профили, переключает их, показывает usage по 5-часовому и недельному окнам и держит базовый GPT route на OpenAI Codex через Pi runtime.
 
-Без отдельного менеджера профилей легко получить сломанное состояние. Модельный маршрут использует `openai-codex/gpt-*` вместо `openai/*`. Runtime выполнения остаётся на Pi вместо native Codex. Агенты продолжают использовать устаревшие auth-файлы после ручного переключения. Сессии не подхватывают новое auth state после авторизации нового аккаунта. Команда `/gptprof status` делает такие состояния видимыми и даёт команды для исправления.
+Целевое базовое состояние в этой публичной версии:
 
-## Главное различие
+- провайдер авторизации: `openai-codex`
+- модель: `openai-codex/gpt-5.5`
+- runtime: `agents.defaults.agentRuntime.id = "pi"`
 
-Самая важная концепция скилла:
+В репозитории лежит только код. В нём нет токенов, account IDs, локального auth state или данных конкретной машины.
 
-- провайдер авторизации: `openai-codex` (OAuth-токен для ChatGPT/Codex auth)
-- правильный маршрут выполнения: модель `openai/*` + `agentRuntime.id = "codex"`
+## Основные Сценарии
 
-OAuth-профиль остаётся профилем OpenAI Codex. Но это не значит, что модельный маршрут должен оставаться `openai-codex/*` на Pi runtime. `/gptprof status` специально определяет старый Pi route и помечает его как `needs native Codex`.
+### Проверить активный профиль
 
-## Основные сценарии
-
-### Проверить активный GPT-аккаунт
-
-```
+```text
 /gptprof
 /gptprof status
 ```
@@ -201,124 +227,119 @@ OAuth-профиль остаётся профилем OpenAI Codex. Но это
 Показывает:
 
 - активный локальный профиль
-- email каждого профиля
+- статус route
 - наличие refresh token
 - дату истечения токена
-- текущий OpenClaw route — native Codex или нет
-- есть ли незавершённая device authorization
+- cached usage по 5-часовому и недельному окнам
+- Telegram inline-кнопки для переключения профилей и auth-действий
+
+Email в компактном Telegram-статусе намеренно не показывается: для ежедневного переключения достаточно slug профиля.
 
 ### Добавить новый OpenAI Codex OAuth-профиль
 
-```
+```text
 /gptprof add
 ```
 
-Запускает OpenAI device authorization, возвращает verification URL, код пользователя и время жизни. После подтверждения в браузере:
+Запускает OpenAI device authorization и возвращает verification URL, user code и время жизни. После подтверждения в браузере:
 
-```
+```text
 /gptprof check
 ```
 
-Менеджер обменивает authorization code на токены, сохраняет их в локальный пул профилей, переключает OpenClaw на новый профиль, обновляет auth-файлы агентов и планирует перезапуск gateway.
+Менеджер обменивает device code на токены, сохраняет их в локальном пуле профилей, переключает OpenClaw на новый профиль, обновляет agent auth files, session auth overrides и планирует restart gateway, если это включено.
 
-### Переключиться между существующими профилями
+### Переключить существующий профиль
 
-```
+```text
 /gptprof switch <slug>
 ```
 
-Копирует выбранный локальный профиль в активное место Codex auth, обновляет OpenClaw agent auth records, обновляет session overrides и заново применяет native Codex route.
+Копирует выбранный локальный профиль в активное место Codex auth, обновляет OpenClaw agent auth records, обновляет session profile overrides и сохраняет базовый Pi route.
 
-### Принудительно включить native Codex route
+В Telegram кнопки профилей используют native inline keyboard rows:
 
+```json
+[[{"text":"✓ work 42%","callback_data":"gptprof:work"}]]
 ```
-/gptprof use-native
+
+Для OpenClaw `2026.5.3-beta.2` не используйте абстрактные поля `label` / `value`, не добавляйте `style` и не отдавайте плоский список кнопок. Telegram ждёт native `text` / `callback_data`, а этот OpenClaw delivery path ждёт rows.
+
+### Обновить usage
+
+```text
+/gptprof refresh
 ```
 
-Выставляет дефолты OpenClaw:
+Загружает usage известных профилей и кеширует его в локальном state. Проверки usage ленивые и ограничены по времени; этот скилл не ставит timer, cron job, daemon или polling loop.
+
+### Autoswitch
+
+```text
+/gptprof autoswitch
+```
+
+Переключает профиль только если активный профиль достиг `>=95%` по 5-часовому или недельному окну, а другой рабочий профиль ниже `95%` по обоим окнам.
+
+Если целевой профиль уже выше порога, Telegram-кнопка показывает warning marker, а callback объясняет, почему переключения нет. Это убирает ситуацию, когда ручной switch успешен, но следующий `/gptprof` или `/gptt` тут же переключает обратно.
+
+### Применить базовый Pi route
+
+```text
+/gptprof use-pi
+```
+
+Ставит OpenClaw defaults:
 
 ```json
 {
   "agents": {
     "defaults": {
-      "model": { "primary": "openai/gpt-5.5" },
-      "agentRuntime": { "id": "codex", "fallback": "none" }
+      "model": { "primary": "openai-codex/gpt-5.5", "fallbacks": [] },
+      "agentRuntime": { "id": "pi" }
     }
   }
 }
 ```
 
-Также проверяет, что плагин `codex` включён и разрешён.
-
-## Политика по секретам
-
-Этот репозиторий безопасен для публичной публикации. Нет OAuth-токенов, refresh tokens, access tokens, account IDs или пользовательского auth-state. Секреты живут только локально:
-
-```
-~/.codex/auth.json
-~/.openclaw/codex-profiles/*/auth.json
-~/.openclaw/agents/*/agent/auth-*.json
-```
-
-Эти файлы нельзя коммитить. OAuth client id в менеджере — публичный идентификатор приложения, не client secret.
-
-## Структура репозитория
-
-```
-SKILL.md                         метаданные OpenClaw-скилла
-plugin/                          OpenClaw extension для /gptprof
-plugin/index.js                  мост между Telegram/tool command и CLI
-plugin/openclaw.plugin.json      манифест плагина
-plugin/package.json              метаданные пакета
-bin/codex-profile-manager.py     локальный CLI-менеджер профилей
-tests/smoke.sh                  syntax check + проверка на секреты
-```
-
-## Установка
-
-```bash
-mkdir -p ~/.local/bin ~/.openclaw/extensions
-cp bin/codex-profile-manager.py ~/.local/bin/codex-profile-manager.py
-chmod 700 ~/.local/bin/codex-profile-manager.py
-cp -R plugin ~/.openclaw/extensions/openclaw-codex-profile-switcher
-```
-
-Затем включить extension в конфиге OpenClaw и разрешить нужные плагины:
-
-```json
-{
-  "plugins": {
-    "allow": ["openai", "codex", "codex-profile-switcher"],
-    "entries": {
-      "codex": { "enabled": true },
-      "codex-profile-switcher": { "enabled": true }
-    }
-  }
-}
-```
-
-Точная форма конфига зависит от установки OpenClaw.
+OpenClaw `2026.5.3-beta.2` отклоняет `agents.defaults.agentRuntime.fallback`; для этого route такой ключ писать нельзя.
 
 ## Команды
 
-```
+```text
 /gptprof
 /gptprof status
 /gptprof add
 /gptprof check
-/gptprof use-native
+/gptprof refresh
+/gptprof autoswitch
+/gptprof use-pi
 /gptprof switch <slug>
 ```
 
-CLI-менеджер работает напрямую:
+CLI менеджера:
 
 ```bash
 python3 ~/.local/bin/codex-profile-manager.py status
 python3 ~/.local/bin/codex-profile-manager.py device-start
 python3 ~/.local/bin/codex-profile-manager.py device-check
+python3 ~/.local/bin/codex-profile-manager.py usage
+python3 ~/.local/bin/codex-profile-manager.py autoswitch
+python3 ~/.local/bin/codex-profile-manager.py apply-pi-route
 python3 ~/.local/bin/codex-profile-manager.py switch <slug>
-python3 ~/.local/bin/codex-profile-manager.py apply-native-route
 ```
+
+## Политика Секретов
+
+Этот репозиторий безопасен для публикации. В нём нет OAuth tokens, refresh tokens, access tokens, account IDs или пользовательского auth state. Runtime secrets остаются только на машине пользователя:
+
+```text
+~/.codex/auth.json
+~/.openclaw/codex-profiles/*/auth.json
+~/.openclaw/agents/*/agent/auth-*.json
+```
+
+Эти пути нельзя коммитить. OAuth client ID в менеджере - публичные metadata приложения, не client secret.
 
 ## Проверки
 
@@ -326,12 +347,4 @@ python3 ~/.local/bin/codex-profile-manager.py apply-native-route
 bash tests/smoke.sh
 ```
 
-Smoke test проверяет синтаксис JavaScript, Python и очевидные паттерны закоммиченных токенов.
-
-## Чего этот скилл не делает
-
-- Не обходит лимиты OpenAI.
-- Не создаёт платные аккаунты.
-- Не хранит credentials в Git.
-- Не гарантирует, что OpenAI/ChatGPT примет любой аккаунт или любую device authorization попытку.
-- Управляет локальными profile-файлами и route config, но не внутренней auth-моделью OpenClaw.
+Smoke test проверяет JavaScript syntax, Python syntax и очевидные committed-token patterns.
