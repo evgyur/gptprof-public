@@ -460,6 +460,15 @@ async function handleTextCommand(args, config) {
 }
 
 async function handleBeforeDispatch(event, context, config) {
+  // Global guard: for every inbound dispatch, check whether the active
+  // OpenAI-Codex profile crossed the usage threshold.  This is deliberately
+  // outside /gptprof so ordinary agent traffic also triggers the 95% failover.
+  // codex-profile-manager uses a usage cache, so this is cheap on hot path.
+  if (config.enabled) {
+    const autoswitched = await managerJson({ ...config, timeoutMs: 8_000 }, ["autoswitch"]);
+    scheduleRestartAfterAutoswitch(config, autoswitched);
+  }
+
   const text = eventText(event) || eventText(context);
   const command = slashCommandFromText(text);
   if (command === "gptt") {

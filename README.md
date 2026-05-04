@@ -85,7 +85,7 @@ Fetches usage for known profiles and caches it in local state. Usage checks are 
 /gptprof autoswitch
 ```
 
-Switches only when the active profile has either its 5-hour or weekly usage window at `>=95%`, and another healthy profile is below `95%` for both windows. When autoswitch performs a real switch from the Telegram plugin, it schedules a gateway restart so all agent session stores reload the new auth profile.
+Switches only when the active profile has either its 5-hour or weekly usage window at `>=95%`, and another healthy profile is below `95%` for both windows. The Telegram plugin also runs this check before ordinary dispatch, so GPT traffic can fail over even when the user did not open `/gptprof`. When autoswitch performs a real switch from the Telegram plugin, it schedules a gateway restart so all agent session stores reload the new auth profile.
 
 If the target profile is already over threshold, the Telegram button shows a warning marker and the callback explains why it is not switching. This avoids the confusing case where a manual switch succeeds and the next `/gptprof` or `/gptt` immediately switches away again.
 
@@ -294,7 +294,7 @@ Email в компактном Telegram-статусе намеренно не п
 /gptprof autoswitch
 ```
 
-Переключает профиль только если активный профиль достиг `>=95%` по 5-часовому или недельному окну, а другой рабочий профиль ниже `95%` по обоим окнам. Когда autoswitch реально переключает профиль из Telegram plugin, он планирует gateway restart, чтобы все agent session stores перечитали новый auth profile.
+Переключает профиль только если активный профиль достиг `>=95%` по 5-часовому или недельному окну, а другой рабочий профиль ниже `95%` по обоим окнам. Telegram plugin также запускает эту проверку перед обычным dispatch, поэтому GPT traffic может переключиться даже если пользователь не открывал `/gptprof`. Когда autoswitch реально переключает профиль из Telegram plugin, он планирует gateway restart, чтобы все agent session stores перечитали новый auth profile.
 
 Если целевой профиль уже выше порога, Telegram-кнопка показывает warning marker, а callback объясняет, почему переключения нет. Это убирает ситуацию, когда ручной switch успешен, но следующий `/gptprof` или `/gptt` тут же переключает обратно.
 

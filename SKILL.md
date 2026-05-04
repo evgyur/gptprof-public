@@ -18,7 +18,7 @@ Manage local OpenAI Codex OAuth profiles for OpenClaw and keep GPT traffic on th
 - `/gptprof add` starts OpenAI device authorization.
 - `/gptprof check` completes pending device authorization after the user approves it.
 - `/gptprof refresh` refreshes usage cache on demand.
-- `/gptprof autoswitch` switches only when the active profile is at or above the 95% usage threshold and a healthy spare profile is below threshold; Telegram plugin autoswitch schedules a gateway restart after a real switch so all agent sessions reload auth.
+- `/gptprof autoswitch` switches only when the active profile is at or above the 95% usage threshold and a healthy spare profile is below threshold; Telegram plugin also checks autoswitch before ordinary dispatch and schedules a gateway restart after a real switch so all agent sessions reload auth.
 - `/gptprof use-pi` sets `agents.defaults.model.primary` to `openai-codex/gpt-5.5` and `agents.defaults.agentRuntime.id` to `pi`.
 - `/gptprof switch <slug>` switches to an existing local profile unless the selected profile is already over the autoswitch threshold.
 - `/gptt` patches the current session to `openai-codex/gpt-5.5` with the active gptprof auth profile, medium thinking, and fast mode.
