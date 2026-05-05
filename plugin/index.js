@@ -329,11 +329,15 @@ function applySlashModelOverride(sessionKey, selection) {
   entry.providerOverride = selection.provider;
   entry.modelOverride = selection.model;
   entry.modelOverrideSource = "user";
+  if (selection.agentHarnessId) entry.agentHarnessId = selection.agentHarnessId;
   if (selection.thinkingLevel) entry.thinkingLevel = selection.thinkingLevel;
   if (typeof selection.fastMode === "boolean") entry.fastMode = selection.fastMode;
   delete entry.model;
   delete entry.modelProvider;
   delete entry.contextTokens;
+  delete entry.agentRuntime;
+  delete entry.runtime;
+  delete entry.runtimeId;
   delete entry.fallbackNoticeSelectedModel;
   delete entry.fallbackNoticeActiveModel;
   delete entry.fallbackNoticeReason;
@@ -426,12 +430,13 @@ function sessionAliasSelection(command) {
   if (command === "gptt") {
     return {
       selection: {
-        provider: "openai-codex",
+        provider: "openai",
         model: "gpt-5.5",
+        agentHarnessId: "codex",
         thinkingLevel: "medium",
         fastMode: true,
       },
-      label: (status) => `Model set to gptt (openai-codex/gpt-5.5) with ${status.active || "active"} auth, thinking medium and fast on for this session.`,
+      label: (status) => `Model set to gptt (openai/gpt-5.5) on Codex runtime with ${status.active || "active"} auth, thinking medium and fast on for this session.`,
     };
   }
   if (command === "gptpro") {
@@ -711,7 +716,7 @@ const plugin = {
     });
     api.registerCommand({
       name: "gptt",
-      description: "Switch this Telegram session to openai-codex/gpt-5.5 with medium thinking and fast mode.",
+      description: "Switch this Telegram session to openai/gpt-5.5 on the native Codex runtime with medium thinking and fast mode.",
       acceptsArgs: false,
       handler: async (ctx) => {
         const result = await handleSessionAliasCommand("gptt", config, ctx, ctx);
