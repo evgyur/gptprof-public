@@ -1,23 +1,65 @@
 {
   "id": "codex-profile-switcher",
   "name": "GPT Profile Switcher",
-  "description": "Telegram /gptprof buttons for OpenAI Codex profile switching, usage checks, and the base Pi route.",
+  "description": "Telegram /gptprof buttons for OpenAI-Codex profiles, native Codex trial routing, Pi fallback, and session aliases.",
+  "activation": {
+    "onStartup": true
+  },
+  "commandAliases": [
+    {
+      "name": "gptprof",
+      "kind": "runtime-slash"
+    },
+    {
+      "name": "gptpro",
+      "kind": "runtime-slash"
+    }
+  ],
+  "contracts": {
+    "tools": [
+      "gptprof"
+    ]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "enabled": { "type": "boolean" },
-      "managerPath": { "type": "string" },
-      "pythonCommand": { "type": "string" },
-      "timeoutMs": { "type": "number" },
-      "restartAfterSwitch": { "type": "boolean" }
+      "enabled": {
+        "type": "boolean"
+      },
+      "managerPath": {
+        "type": "string"
+      },
+      "pythonCommand": {
+        "type": "string"
+      },
+      "timeoutMs": {
+        "type": "number"
+      },
+      "restartAfterSwitch": {
+        "type": "boolean"
+      }
     }
   },
   "uiHints": {
-    "enabled": { "label": "Enabled" },
-    "managerPath": { "label": "Manager path", "advanced": true },
-    "pythonCommand": { "label": "Python command", "advanced": true },
-    "timeoutMs": { "label": "Command timeout ms", "advanced": true },
-    "restartAfterSwitch": { "label": "Restart gateway after switch", "advanced": true }
+    "enabled": {
+      "label": "Enabled"
+    },
+    "managerPath": {
+      "label": "Manager path",
+      "advanced": true
+    },
+    "pythonCommand": {
+      "label": "Python command",
+      "advanced": true
+    },
+    "timeoutMs": {
+      "label": "Command timeout ms",
+      "advanced": true
+    },
+    "restartAfterSwitch": {
+      "label": "Restart gateway after switch",
+      "advanced": true
+    }
   }
 }

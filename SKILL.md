@@ -23,6 +23,7 @@ Manage local OpenAI Codex OAuth profiles for OpenClaw, keep the safe OpenAI-Code
 - `/gptprof try-codex` or `/gptprof use-native` sets `agents.defaults.model.primary` to `openai/gpt-5.5` and `agents.defaults.agentRuntime.id` to `codex`.
 - `/gptprof switch <slug>` switches to an existing local profile unless the selected profile is already over the autoswitch threshold.
 - `/gptt` patches the current session to `openai-codex/gpt-5.5` with the active gptprof auth profile, medium thinking, and fast mode.
+- `/gptpro` patches the current session to `openai/gpt-5.5-pro` with high thinking and fast mode off.
 
 ## Important Routing Distinction
 

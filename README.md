@@ -105,9 +105,10 @@ The plugin can intercept selected slash aliases before model dispatch:
 
 ```text
 /gptt
+/gptpro
 ```
 
-`/gptt` keeps the current session on `openai-codex/gpt-5.5` with the active gptprof auth profile, medium thinking, and fast mode. This alias patches only the current OpenClaw session store entry and makes a timestamped backup before writing.
+`/gptt` keeps the current session on `openai-codex/gpt-5.5` with the active gptprof auth profile, medium thinking, and fast mode. `/gptpro` patches the current session to `openai/gpt-5.5-pro`, high thinking, and fast mode off. These aliases patch only the current OpenClaw session store entry and make a timestamped backup before writing.
 
 ### Apply the safe Pi route
 
@@ -143,6 +144,7 @@ OpenClaw `2026.5.3-beta.2` and newer reject `agents.defaults.agentRuntime.fallba
 /gptprof use-pi
 /gptprof switch <slug>
 /gptt
+/gptpro
 ```
 
 The manager CLI also works directly:
@@ -318,9 +320,10 @@ Plugin может перехватывать отдельные slash aliases д
 
 ```text
 /gptt
+/gptpro
 ```
 
-`/gptt` держит текущую сессию на `openai-codex/gpt-5.5` с активным gptprof auth profile, medium thinking и fast mode. Этот alias патчит только текущую OpenClaw session store entry и перед записью делает timestamped backup.
+`/gptt` держит текущую сессию на `openai-codex/gpt-5.5` с активным gptprof auth profile, medium thinking и fast mode. `/gptpro` патчит текущую сессию на `openai/gpt-5.5-pro`, high thinking и fast mode off. Эти aliases патчат только текущую OpenClaw session store entry и перед записью делают timestamped backup.
 
 ### Применить безопасный Pi route
 
@@ -356,6 +359,7 @@ OpenClaw `2026.5.3-beta.2` и новее отклоняют `agents.defaults.age
 /gptprof use-pi
 /gptprof switch <slug>
 /gptt
+/gptpro
 ```
 
 CLI менеджера:

@@ -390,6 +390,26 @@ function textOnlyStatus(status) {
   return statusText(status);
 }
 
+function activeAuthProfileFromStatus(status) {
+  const activeProfile = Array.isArray(status.profiles) ? status.profiles.find((profile) => profile.active) : null;
+  return activeProfile?.email ? `openai-codex:${activeProfile.email}` : "";
+}
+
+async function applySessionModelCommand(config, event, context, selection, label) {
+  const autoswitched = await managerJson({ ...config, timeoutMs: 8_000 }, ["autoswitch"]);
+  scheduleRestartAfterAutoswitch(config, autoswitched);
+  const status = await managerJson({ ...config, timeoutMs: 8_000 }, ["status"]);
+  const sessionKey = event?.sessionKey || context?.sessionKey;
+  const selectionWithAuth = {
+    ...selection,
+    authProfile: activeAuthProfileFromStatus(status),
+  };
+  const patched = applySlashModelOverride(sessionKey, selectionWithAuth);
+  if (!patched.ok) return { handled: true, text: `GPT model switch failed: ${patched.error}` };
+  applySlashModelOverrideAfterFlush(sessionKey, selectionWithAuth);
+  return { handled: true, text: label(status) };
+}
+
 async function handleTextCommand(args, config) {
   const fastConfig = { ...config, timeoutMs: Math.min(config.timeoutMs || DEFAULT_TIMEOUT_MS, 12_000) };
   const action = String(args[0] || "status").toLowerCase();
@@ -478,23 +498,20 @@ async function handleBeforeDispatch(event, context, config) {
   const text = eventText(event) || eventText(context);
   const command = slashCommandFromText(text);
   if (command === "gptt") {
-    const autoswitched = await managerJson({ ...config, timeoutMs: 8_000 }, ["autoswitch"]);
-    scheduleRestartAfterAutoswitch(config, autoswitched);
-    const status = await managerJson({ ...config, timeoutMs: 8_000 }, ["status"]);
-    const activeProfile = Array.isArray(status.profiles) ? status.profiles.find((profile) => profile.active) : null;
-    const authProfile = activeProfile?.email ? `openai-codex:${activeProfile.email}` : "";
-    const sessionKey = event?.sessionKey || context?.sessionKey;
-    const selection = {
+    return await applySessionModelCommand(config, event, context, {
       provider: "openai-codex",
       model: "gpt-5.5",
       thinkingLevel: "medium",
       fastMode: true,
-      authProfile,
-    };
-    const patched = applySlashModelOverride(sessionKey, selection);
-    if (!patched.ok) return { handled: true, text: `GPT model switch failed: ${patched.error}` };
-    applySlashModelOverrideAfterFlush(sessionKey, selection);
-    return { handled: true, text: `Model set to gptt (openai-codex/gpt-5.5) with ${status.active || "active"} auth, thinking medium and fast on for this session.` };
+    }, (status) => `Model set to gptt (openai-codex/gpt-5.5) with ${status.active || "active"} auth, thinking medium and fast on for this session.`);
+  }
+  if (command === "gptpro") {
+    return await applySessionModelCommand(config, event, context, {
+      provider: "openai",
+      model: "gpt-5.5-pro",
+      thinkingLevel: "high",
+      fastMode: false,
+    }, (status) => `Model set to gptpro (openai/gpt-5.5-pro) with ${status.active || "active"} auth, thinking high and fast off for this session.`);
   }
   const args = commandPartsFromText(text);
   if (!args) return { handled: false };
