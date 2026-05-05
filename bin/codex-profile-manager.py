@@ -44,6 +44,7 @@ LEGACY_PI_ALIASES = {
     "openai-codex/gpt-5.5": "gptt-pi",
     "openai-codex/gpt-5.4-mini": "gptm-pi",
 }
+OPENAI_ROUTE_PREFIXES = ("openai/", "openai-codex/")
 
 PERMANENT_REFRESH_CODES = {
     "invalid_grant", "invalid_request", "invalid_client", "unauthorized_client",
@@ -378,6 +379,37 @@ def native_route_status():
     }
 
 
+def iter_openai_agent_overrides(cfg):
+    agents = cfg.get("agents") if isinstance(cfg.get("agents"), dict) else {}
+    agent_list = agents.get("list") if isinstance(agents.get("list"), list) else []
+    for agent in agent_list:
+        if not isinstance(agent, dict):
+            continue
+        model_cfg = agent.get("model") if isinstance(agent.get("model"), dict) else {}
+        primary = model_cfg.get("primary")
+        runtime_cfg = agent.get("agentRuntime") if isinstance(agent.get("agentRuntime"), dict) else {}
+        runtime_id = runtime_cfg.get("id")
+        if (
+            isinstance(primary, str)
+            and primary.startswith(OPENAI_ROUTE_PREFIXES)
+            and (runtime_id in ("pi", "codex", None) or not runtime_cfg)
+        ):
+            yield agent
+
+
+def apply_openai_agent_route_overrides(cfg, model, runtime_id):
+    changed = 0
+    for agent in iter_openai_agent_overrides(cfg):
+        current_model = agent.get("model") if isinstance(agent.get("model"), dict) else {}
+        current_runtime = agent.get("agentRuntime") if isinstance(agent.get("agentRuntime"), dict) else {}
+        if current_model.get("primary") == model and current_runtime.get("id") == runtime_id:
+            continue
+        agent["model"] = {**current_model, "primary": model, "fallbacks": []}
+        agent["agentRuntime"] = {**current_runtime, "id": runtime_id}
+        changed += 1
+    return changed
+
+
 def ensure_openai_codex_pi_route(model=None, reason="manual"):
     model = (model or DEFAULT_PI_MODEL).strip()
     if not model.startswith("openai-codex/"):
@@ -438,6 +470,7 @@ def ensure_openai_codex_pi_route(model=None, reason="manual"):
     if isinstance(native_entry, dict) and native_entry.get("alias") == "gptt":
         native_entry["alias"] = "gptt-native"
     defaults["models"] = models
+    agent_override_count = apply_openai_agent_route_overrides(cfg, model, "pi")
 
     write_json_atomic(OPENCLAW_CONFIG, cfg, mode=0o600)
     state = load_state()
@@ -446,7 +479,7 @@ def ensure_openai_codex_pi_route(model=None, reason="manual"):
     state["routeHistory"] = hist[-100:]
     state["baseRoute"] = {"model": model, "runtime": "pi", "updatedAt": now_iso()}
     save_state(state)
-    return {"ok": True, "model": model, "status": native_route_status(), "backupStamp": stamp}
+    return {"ok": True, "model": model, "agentOverrides": agent_override_count, "status": native_route_status(), "backupStamp": stamp}
 
 
 def ensure_native_codex_route(model=None, reason="manual"):
@@ -513,6 +546,7 @@ def ensure_native_codex_route(model=None, reason="manual"):
         if isinstance(legacy_entry, dict):
             legacy_entry["alias"] = alias
     defaults["models"] = models
+    agent_override_count = apply_openai_agent_route_overrides(cfg, model, "codex")
 
     write_json_atomic(OPENCLAW_CONFIG, cfg, mode=0o600)
     state = load_state()
@@ -524,7 +558,7 @@ def ensure_native_codex_route(model=None, reason="manual"):
         native_route["previousFallbacks"] = previous_fallbacks
     state["nativeRoute"] = native_route
     save_state(state)
-    return {"ok": True, "model": model, "status": native_route_status(), "backupStamp": stamp}
+    return {"ok": True, "model": model, "agentOverrides": agent_override_count, "status": native_route_status(), "backupStamp": stamp}
 
 
 def backup_path(path, stamp):
@@ -598,9 +632,91 @@ def openclaw_profile_record(auth):
     return email, f"openai-codex:{email}", record
 
 
+def native_openai_session(session):
+    provider = session.get("modelProvider") or session.get("providerOverride")
+    model = session.get("model") or session.get("modelOverride")
+    return provider == "openai" or (isinstance(model, str) and model.startswith("openai/"))
+
+
+def session_file_candidates(agent_dir, session_id):
+    if not session_id:
+        return []
+    sessions_dir = agent_dir / "sessions"
+    if not sessions_dir.exists():
+        return []
+    try:
+        return [p for p in sessions_dir.iterdir() if p.name.startswith(str(session_id))]
+    except OSError:
+        return []
+
+
+def native_session_bound_to_other_profile(agent_dir, session, profile_id):
+    session_id = session.get("sessionId")
+    for path in session_file_candidates(agent_dir, session_id):
+        if path.suffix not in (".json", ".jsonl") and not path.name.endswith(".codex-app-server.json"):
+            continue
+        try:
+            if path.stat().st_size > 25 * 1024 * 1024:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        marker = '"authProfileId"'
+        if marker not in text:
+            continue
+        if profile_id not in text:
+            return True
+    return False
+
+
+def archive_session_files(agent_dir, session, stamp, reason):
+    session_id = session.get("sessionId")
+    if not session_id:
+        return False
+    incident = OPENCLAW / f"incident-{stamp}" / reason / agent_dir.name
+    incident.mkdir(parents=True, exist_ok=True)
+    moved = False
+    for path in session_file_candidates(agent_dir, session_id):
+        try:
+            shutil.move(str(path), str(incident / path.name))
+            moved = True
+        except OSError:
+            pass
+    return moved
+
+
+def update_sessions_for_profile(agent_dir, sessions_path, profile_id, stamp):
+    data = load_json(sessions_path, {})
+    dirty = False
+    changed_entries = 0
+    archived_entries = 0
+    if not isinstance(data, dict):
+        return False, changed_entries, archived_entries
+    for key, session in list(data.items()):
+        if not isinstance(session, dict):
+            continue
+        if native_openai_session(session) and native_session_bound_to_other_profile(agent_dir, session, profile_id):
+            archive_session_files(agent_dir, session, stamp, "native-openai-profile-switch-reset")
+            del data[key]
+            dirty = True
+            archived_entries += 1
+            continue
+        current = session.get("authProfileOverride")
+        if current is None or str(current).startswith("openai-codex:"):
+            if session.get("authProfileOverride") != profile_id:
+                session["authProfileOverride"] = profile_id
+                session["authProfileOverrideSource"] = "codex-profile-switcher"
+                dirty = True
+                changed_entries += 1
+    if dirty:
+        backup_path(sessions_path, stamp)
+        write_json_atomic(sessions_path, data)
+    return dirty, changed_entries, archived_entries
+
+
 def update_agent_auth(auth, stamp):
     email, profile_id, record = openclaw_profile_record(auth)
-    changed = {"authProfiles": 0, "authState": 0, "sessions": 0}
+    changed = {"authProfiles": 0, "authState": 0, "sessions": 0, "archivedNativeSessions": 0}
     if not AGENTS.exists():
         return changed
     for agent_dir in sorted(p for p in AGENTS.iterdir() if p.is_dir()):
@@ -639,48 +755,24 @@ def update_agent_auth(auth, stamp):
             changed["authState"] += 1
         sp = agent_dir / "sessions" / "sessions.json"
         if sp.exists():
-            data = load_json(sp, {})
-            dirty = False
-            if isinstance(data, dict):
-                for session in data.values():
-                    if not isinstance(session, dict):
-                        continue
-                    current = session.get("authProfileOverride")
-                    if current is None or str(current).startswith("openai-codex:"):
-                        if session.get("authProfileOverride") != profile_id:
-                            session["authProfileOverride"] = profile_id
-                            session["authProfileOverrideSource"] = "codex-profile-switcher"
-                            dirty = True
+            dirty, _, archived = update_sessions_for_profile(agent_dir, sp, profile_id, stamp)
+            changed["archivedNativeSessions"] += archived
             if dirty:
-                backup_path(sp, stamp)
-                write_json_atomic(sp, data)
                 changed["sessions"] += 1
     return changed
 
 
 def update_session_overrides(profile_id, stamp):
-    changed = {"sessions": 0}
+    changed = {"sessions": 0, "archivedNativeSessions": 0}
     if not AGENTS.exists():
         return changed
     for agent_dir in sorted(p for p in AGENTS.iterdir() if p.is_dir()):
         sp = agent_dir / "sessions" / "sessions.json"
         if not sp.exists():
             continue
-        data = load_json(sp, {})
-        dirty = False
-        if isinstance(data, dict):
-            for session in data.values():
-                if not isinstance(session, dict):
-                    continue
-                current = session.get("authProfileOverride")
-                if current is None or str(current).startswith("openai-codex:"):
-                    if session.get("authProfileOverride") != profile_id:
-                        session["authProfileOverride"] = profile_id
-                        session["authProfileOverrideSource"] = "codex-profile-switcher"
-                        dirty = True
+        dirty, _, archived = update_sessions_for_profile(agent_dir, sp, profile_id, stamp)
+        changed["archivedNativeSessions"] += archived
         if dirty:
-            backup_path(sp, stamp)
-            write_json_atomic(sp, data)
             changed["sessions"] += 1
     return changed
 
