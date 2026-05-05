@@ -658,6 +658,44 @@ def update_agent_auth(auth, stamp):
     return changed
 
 
+def update_session_overrides(profile_id, stamp):
+    changed = {"sessions": 0}
+    if not AGENTS.exists():
+        return changed
+    for agent_dir in sorted(p for p in AGENTS.iterdir() if p.is_dir()):
+        sp = agent_dir / "sessions" / "sessions.json"
+        if not sp.exists():
+            continue
+        data = load_json(sp, {})
+        dirty = False
+        if isinstance(data, dict):
+            for session in data.values():
+                if not isinstance(session, dict):
+                    continue
+                current = session.get("authProfileOverride")
+                if current is None or str(current).startswith("openai-codex:"):
+                    if session.get("authProfileOverride") != profile_id:
+                        session["authProfileOverride"] = profile_id
+                        session["authProfileOverrideSource"] = "codex-profile-switcher"
+                        dirty = True
+        if dirty:
+            backup_path(sp, stamp)
+            write_json_atomic(sp, data)
+            changed["sessions"] += 1
+    return changed
+
+
+def reconcile_active_session_overrides(active):
+    auth = load_json(profile_auth_path(active), None)
+    if not isinstance(auth, dict):
+        return {"sessions": 0, "error": "active_profile_not_found"}
+    email = auth_email(auth)
+    if not email:
+        return {"sessions": 0, "error": "active_profile_has_no_email"}
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return update_session_overrides(f"openai-codex:{email}", stamp)
+
+
 def switch_profile(slug, reason="manual"):
     ensure_seed_current()
     slug = slug.strip().lower()
@@ -931,11 +969,12 @@ def autoswitch(force=False):
     profiles = [p["slug"] for p in list_profiles()]
     if not active or active not in profiles:
         return {"ok": False, "error": "no_active_profile", "profiles": profiles}
+    reconciled = reconcile_active_session_overrides(active)
     active_usage = get_usage(active, force=force)
     if not active_usage.get("ok"):
-        return {"ok": False, "switched": False, "active": active, "reason": "usage_unavailable", "usage": active_usage}
+        return {"ok": False, "switched": False, "active": active, "reason": "usage_unavailable", "usage": active_usage, "reconciled": reconciled}
     if not usage_is_over_threshold(active_usage):
-        return {"ok": True, "switched": False, "active": active, "reason": "below_threshold", "usage": active_usage, "threshold": SWITCH_THRESHOLD}
+        return {"ok": True, "switched": False, "active": active, "reason": "below_threshold", "usage": active_usage, "threshold": SWITCH_THRESHOLD, "reconciled": reconciled}
     checked = []
     for slug in profiles:
         if slug == active:
