@@ -49,10 +49,30 @@ PERMANENT_REFRESH_CODES = {
     "invalid_grant", "invalid_request", "invalid_client", "unauthorized_client",
     "unsupported_grant_type", "invalid_refresh_token", "consent_required",
 }
+SURROGATE_TRANSLATION = {codepoint: "\ufffd" for codepoint in range(0xD800, 0xE000)}
 
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def scrub_surrogates(value):
+    if isinstance(value, str):
+        return value.translate(SURROGATE_TRANSLATION)
+    if isinstance(value, list):
+        return [scrub_surrogates(item) for item in value]
+    if isinstance(value, tuple):
+        return [scrub_surrogates(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            scrub_surrogates(key): scrub_surrogates(item)
+            for key, item in value.items()
+        }
+    return value
+
+
+def json_dumps_safe(data, **kwargs):
+    return json.dumps(scrub_surrogates(data), **kwargs)
 
 
 def load_json(path, default=None):
@@ -69,7 +89,7 @@ def write_json_atomic(path, data, mode=0o600):
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=False)
+            json.dump(scrub_surrogates(data), f, ensure_ascii=False, indent=2, sort_keys=False)
             f.write("\n")
         os.chmod(tmp, mode)
         os.replace(tmp, path)
@@ -676,7 +696,7 @@ def http_json(url, payload=None, headers=None, timeout=20):
     method = "GET"
     req_headers = dict(headers or {})
     if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
+        data = json_dumps_safe(payload).encode("utf-8")
         req_headers.setdefault("Content-Type", "application/json")
         method = "POST"
     req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
@@ -994,9 +1014,9 @@ def main():
             out = device_start()
         elif args.cmd == "device-check":
             out = device_check()
-        print(json.dumps(out, ensure_ascii=False, indent=2))
+        print(json_dumps_safe(out, ensure_ascii=False, indent=2))
     except Exception as e:
-        print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False, indent=2), file=sys.stdout)
+        print(json_dumps_safe({"ok": False, "error": str(e)}, ensure_ascii=False, indent=2), file=sys.stdout)
         sys.exit(1)
 
 if __name__ == "__main__":
