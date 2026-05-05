@@ -194,7 +194,12 @@ function profileButtons(status) {
   buttons.push(button("🔁 Autoswitch", "gptprof:autoswitch"));
   buttons.push(button("➕ Add", "gptprof:device-start"));
   buttons.push(button("✅ Check auth", "gptprof:device-check"));
-  if (!status?.route?.ok) {
+  if (status?.route?.nativeCodexRoute) {
+    buttons.push(button("↩️ Back to Pi route", "gptprof:route-pi"));
+  } else {
+    buttons.push(button("🧪 Try Codex runtime", "gptprof:route-native"));
+  }
+  if (!status?.route?.ok && !status?.route?.nativeCodexRoute) {
     buttons.push(button("🛠 Fix Pi route", "gptprof:route-pi"));
   }
   const rows = [];
@@ -266,10 +271,10 @@ function statusText(status) {
   const route = asObject(status.route);
   const runtimeId = route.agentRuntime?.id || "pi";
   const routeLine = route.legacyPiRoute
-    ? `✅ Route: OpenAI Codex · Pi\n🧠 Model: ${route.primaryModel}`
+    ? `✅ Route: OpenAI-Codex OAuth · Pi\n🧠 Model: ${route.primaryModel}\n🧪 Trial available: openai/gpt-5.5 · runtime=codex`
     : route.nativeCodexRoute
-      ? `⚠️ Route: native Codex\n🧠 Model: ${route.primaryModel}\nExpected: openai-codex/* · Pi`
-      : `🛠 Route needs repair\nCurrent: ${route.primaryModel || "none"} · runtime=${runtimeId}\nExpected: openai-codex/* · Pi`;
+      ? `🧪 Route: native Codex trial\n🧠 Model: ${route.primaryModel}\n⚙️ Runtime: ${runtimeId}\n↩️ Pi fallback available: openai-codex/gpt-5.5 · runtime=pi`
+      : `🛠 Route needs repair\nCurrent: ${route.primaryModel || "none"} · runtime=${runtimeId}\nExpected safe default: openai-codex/* · Pi\nTrial route: openai/* · Codex runtime`;
   const rows = profiles.map((profile) => {
     const marker = profile.active ? "✅" : "▫️";
     const planBadge = profilePlanBadge(status, profile);
@@ -437,17 +442,17 @@ async function handleTextCommand(args, config) {
     if (config.restartAfterSwitch) scheduleRestart();
     return `Added and switched GPT profile to ${checked.active}. Gateway restart scheduled.`;
   }
-  if (action === "use-pi" || action === "pi" || action === "route-pi") {
+  if (action === "use-pi" || action === "pi" || action === "route-pi" || action === "back-pi") {
     const routed = await managerJson(config, ["apply-pi-route"]);
     if (routed.ok === false) return `OpenAI-Codex Pi route failed: ${routed.error}`;
     if (config.restartAfterSwitch) scheduleRestart();
-    return "OpenAI-Codex Pi route applied. Gateway restart scheduled.";
+    return "OpenAI-Codex Pi route restored. Gateway restart scheduled.";
   }
-  if (action === "use-native" || action === "native" || action === "route-native") {
+  if (action === "use-native" || action === "native" || action === "route-native" || action === "try-codex" || action === "codex-runtime") {
     const routed = await managerJson(config, ["apply-native-route"]);
-    if (routed.ok === false) return `Native Codex route failed: ${routed.error}`;
+    if (routed.ok === false) return `Native Codex trial route failed: ${routed.error}`;
     if (config.restartAfterSwitch) scheduleRestart();
-    return "Native Codex route applied as a manual non-base route. Gateway restart scheduled.";
+    return "Native Codex trial route applied: openai/gpt-5.5 with runtime=codex. Gateway restart scheduled.";
   }
   if (action === "switch") {
     const slug = String(args[1] || "").trim().toLowerCase();
@@ -457,7 +462,7 @@ async function handleTextCommand(args, config) {
     if (config.restartAfterSwitch) scheduleRestart();
     return `Switched GPT profile to ${switched.active}. Gateway restart scheduled.`;
   }
-  return "Usage: /gptprof [status|add|check|use-pi|switch <slug>]";
+  return "Usage: /gptprof [status|add|check|try-codex|use-pi|switch <slug>]";
 }
 
 async function handleBeforeDispatch(event, context, config) {
@@ -537,7 +542,7 @@ async function handleInteractive(ctx, config) {
       return { handled: true };
     }
     const status = await managerJson(config, ["status"]);
-    await ctx.respond?.editMessage?.({ text: `Native Codex route applied.\nGateway restart scheduled.\n\n${statusText(status)}`, buttons: profileButtons(status) });
+    await ctx.respond?.editMessage?.({ text: `Native Codex trial route applied.\nModel: openai/gpt-5.5\nRuntime: codex\nGateway restart scheduled.\n\n${statusText(status)}`, buttons: profileButtons(status) });
     if (config.restartAfterSwitch) scheduleRestart();
     return { handled: true };
   }
@@ -548,7 +553,7 @@ async function handleInteractive(ctx, config) {
       return { handled: true };
     }
     const status = await managerJson(config, ["status"]);
-    await ctx.respond?.editMessage?.({ text: `OpenAI-Codex Pi route applied.\nGateway restart scheduled.\n\n${statusText(status)}`, buttons: profileButtons(status) });
+    await ctx.respond?.editMessage?.({ text: `OpenAI-Codex Pi route restored.\nGateway restart scheduled.\n\n${statusText(status)}`, buttons: profileButtons(status) });
     if (config.restartAfterSwitch) scheduleRestart();
     return { handled: true };
   }
@@ -645,7 +650,7 @@ async function handleInteractive(ctx, config) {
 const plugin = {
   id: "codex-profile-switcher",
   name: "GPT Profile Switcher",
-  description: "Telegram /gptprof buttons for OpenAI-Codex account profiles and the base Pi runtime route.",
+  description: "Telegram /gptprof buttons for OpenAI-Codex account profiles with safe Pi route and native Codex runtime trial.",
   register(api) {
     const config = getConfig(api);
     if (typeof api.registerTool === "function") {
@@ -653,7 +658,7 @@ const plugin = {
     }
     api.registerCommand({
       name: "gptprof",
-      description: "Switch OpenAI-Codex account profiles and keep OpenClaw on openai-codex/* with Pi runtime.",
+      description: "Switch OpenAI-Codex account profiles and try native Codex runtime without changing the safe Pi fallback.",
       acceptsArgs: false,
       handler: async () => await handleCommand(config),
     });

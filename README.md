@@ -12,13 +12,19 @@ Sanitized public OpenClaw skill/plugin for managing OpenAI Codex OAuth profiles,
 
 ## What This Skill Is For
 
-`gptprof-public` manages several local ChatGPT/OpenAI Codex OAuth profiles for OpenClaw. It lets an operator add profiles, switch between them, show usage for the 5-hour and weekly windows, and keep the base GPT route on OpenAI Codex through the Pi runtime.
+`gptprof-public` manages several local ChatGPT/OpenAI Codex OAuth profiles for OpenClaw. It lets an operator add profiles, switch between them, show usage for the 5-hour and weekly windows, and keep the safe GPT route on OpenAI-Codex through the Pi runtime, and run a native Codex runtime trial when requested.
 
-The intended base route in this public version is:
+The safe fallback route is:
 
 - auth provider: `openai-codex`
 - model: `openai-codex/gpt-5.5`
 - runtime: `agents.defaults.agentRuntime.id = "pi"`
+
+The native Codex trial route is:
+
+- auth provider: `openai-codex` OAuth profile
+- model: `openai/gpt-5.5`
+- runtime: `agents.defaults.agentRuntime.id = "codex"`
 
 This repo contains code only. It does not include tokens, account IDs, local auth state, or machine-specific profile data.
 
@@ -63,7 +69,7 @@ The manager exchanges the device code for tokens, stores them in the local profi
 /gptprof switch <slug>
 ```
 
-Copies the selected local profile into the active Codex auth location, updates OpenClaw agent auth records, updates session profile overrides, and keeps the base Pi route applied.
+Copies the selected local profile into the active Codex auth location, updates OpenClaw agent auth records, updates session profile overrides, and leaves the current route mode intact.
 
 In Telegram, profile buttons use native inline keyboard rows:
 
@@ -103,7 +109,7 @@ The plugin can intercept selected slash aliases before model dispatch:
 
 `/gptt` keeps the current session on `openai-codex/gpt-5.5` with the active gptprof auth profile, medium thinking, and fast mode. This alias patches only the current OpenClaw session store entry and makes a timestamped backup before writing.
 
-### Apply the base Pi route
+### Apply the safe Pi route
 
 ```text
 /gptprof use-pi
@@ -122,7 +128,7 @@ Sets OpenClaw defaults to:
 }
 ```
 
-OpenClaw `2026.5.3-beta.2` rejects `agents.defaults.agentRuntime.fallback`; do not write that key for this route.
+OpenClaw `2026.5.3-beta.2` and newer reject `agents.defaults.agentRuntime.fallback`; do not write that key for these routes. Use `/gptprof try-codex` for the native runtime trial and `/gptprof use-pi` to restore the safe fallback.
 
 ## Commands
 
@@ -133,6 +139,7 @@ OpenClaw `2026.5.3-beta.2` rejects `agents.defaults.agentRuntime.fallback`; do n
 /gptprof check
 /gptprof refresh
 /gptprof autoswitch
+/gptprof try-codex
 /gptprof use-pi
 /gptprof switch <slug>
 /gptt
@@ -146,6 +153,7 @@ python3 ~/.local/bin/codex-profile-manager.py device-start
 python3 ~/.local/bin/codex-profile-manager.py device-check
 python3 ~/.local/bin/codex-profile-manager.py usage
 python3 ~/.local/bin/codex-profile-manager.py autoswitch
+python3 ~/.local/bin/codex-profile-manager.py apply-native-route
 python3 ~/.local/bin/codex-profile-manager.py apply-pi-route
 python3 ~/.local/bin/codex-profile-manager.py switch <slug>
 ```
@@ -274,7 +282,7 @@ Email в компактном Telegram-статусе намеренно не п
 /gptprof switch <slug>
 ```
 
-Копирует выбранный локальный профиль в активное место Codex auth, обновляет OpenClaw agent auth records, обновляет session profile overrides и сохраняет базовый Pi route.
+Копирует выбранный локальный профиль в активное место Codex auth, обновляет OpenClaw agent auth records, обновляет session profile overrides и не меняет выбранный route mode.
 
 В Telegram кнопки профилей используют native inline keyboard rows:
 
@@ -314,7 +322,7 @@ Plugin может перехватывать отдельные slash aliases д
 
 `/gptt` держит текущую сессию на `openai-codex/gpt-5.5` с активным gptprof auth profile, medium thinking и fast mode. Этот alias патчит только текущую OpenClaw session store entry и перед записью делает timestamped backup.
 
-### Применить базовый Pi route
+### Применить безопасный Pi route
 
 ```text
 /gptprof use-pi
@@ -333,7 +341,7 @@ Plugin может перехватывать отдельные slash aliases д
 }
 ```
 
-OpenClaw `2026.5.3-beta.2` отклоняет `agents.defaults.agentRuntime.fallback`; для этого route такой ключ писать нельзя.
+OpenClaw `2026.5.3-beta.2` и новее отклоняют `agents.defaults.agentRuntime.fallback`; для этих route такой ключ писать нельзя. Используй `/gptprof try-codex` для native runtime trial и `/gptprof use-pi`, чтобы вернуть безопасный fallback.
 
 ## Команды
 
@@ -344,6 +352,7 @@ OpenClaw `2026.5.3-beta.2` отклоняет `agents.defaults.agentRuntime.fall
 /gptprof check
 /gptprof refresh
 /gptprof autoswitch
+/gptprof try-codex
 /gptprof use-pi
 /gptprof switch <slug>
 /gptt
@@ -357,6 +366,7 @@ python3 ~/.local/bin/codex-profile-manager.py device-start
 python3 ~/.local/bin/codex-profile-manager.py device-check
 python3 ~/.local/bin/codex-profile-manager.py usage
 python3 ~/.local/bin/codex-profile-manager.py autoswitch
+python3 ~/.local/bin/codex-profile-manager.py apply-native-route
 python3 ~/.local/bin/codex-profile-manager.py apply-pi-route
 python3 ~/.local/bin/codex-profile-manager.py switch <slug>
 ```
