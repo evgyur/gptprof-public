@@ -11,6 +11,10 @@
       "kind": "runtime-slash"
     },
     {
+      "name": "gptt",
+      "kind": "runtime-slash"
+    },
+    {
       "name": "gptpro",
       "kind": "runtime-slash"
     }

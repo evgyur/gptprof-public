@@ -366,6 +366,9 @@ async function handleCommand(config) {
 async function handleInboundClaim(event, context, config) {
   const text = eventText(event) || eventText(context);
   const command = text.startsWith("/") ? text.slice(1).split(/\s+/, 1)[0].split("@", 1)[0].toLowerCase() : "";
+  if (command === "gptt" || command === "gptpro") {
+    return await handleSessionAliasCommand(command, config, event, context);
+  }
   if (command !== "gptprof") return { handled: false };
   const reply = await handleCommand(config);
   return { handled: true, text: reply.text, channelData: reply.channelData, reply };
@@ -395,11 +398,20 @@ function activeAuthProfileFromStatus(status) {
   return activeProfile?.email ? `openai-codex:${activeProfile.email}` : "";
 }
 
+function sessionKeyFromEventOrContext(event, context) {
+  const direct = event?.sessionKey || context?.sessionKey;
+  if (direct) return direct;
+  const senderId = event?.senderId || context?.senderId || event?.from || context?.from;
+  const channel = event?.channel || context?.channel;
+  if (channel === "telegram" && senderId) return `agent:chipdm:telegram:direct:${senderId}`;
+  return "";
+}
+
 async function applySessionModelCommand(config, event, context, selection, label) {
   const autoswitched = await managerJson({ ...config, timeoutMs: 8_000 }, ["autoswitch"]);
   scheduleRestartAfterAutoswitch(config, autoswitched);
   const status = await managerJson({ ...config, timeoutMs: 8_000 }, ["status"]);
-  const sessionKey = event?.sessionKey || context?.sessionKey;
+  const sessionKey = sessionKeyFromEventOrContext(event, context);
   const selectionWithAuth = {
     ...selection,
     authProfile: activeAuthProfileFromStatus(status),
@@ -408,6 +420,38 @@ async function applySessionModelCommand(config, event, context, selection, label
   if (!patched.ok) return { handled: true, text: `GPT model switch failed: ${patched.error}` };
   applySlashModelOverrideAfterFlush(sessionKey, selectionWithAuth);
   return { handled: true, text: label(status) };
+}
+
+function sessionAliasSelection(command) {
+  if (command === "gptt") {
+    return {
+      selection: {
+        provider: "openai-codex",
+        model: "gpt-5.5",
+        thinkingLevel: "medium",
+        fastMode: true,
+      },
+      label: (status) => `Model set to gptt (openai-codex/gpt-5.5) with ${status.active || "active"} auth, thinking medium and fast on for this session.`,
+    };
+  }
+  if (command === "gptpro") {
+    return {
+      selection: {
+        provider: "openai",
+        model: "gpt-5.5-pro",
+        thinkingLevel: "high",
+        fastMode: false,
+      },
+      label: (status) => `Model set to gptpro (openai/gpt-5.5-pro) with ${status.active || "active"} auth, thinking high and fast off for this session.`,
+    };
+  }
+  return null;
+}
+
+async function handleSessionAliasCommand(command, config, event, context) {
+  const alias = sessionAliasSelection(command);
+  if (!alias) return { handled: false };
+  return await applySessionModelCommand(config, event, context, alias.selection, alias.label);
 }
 
 async function handleTextCommand(args, config) {
@@ -497,22 +541,8 @@ async function handleBeforeDispatch(event, context, config) {
 
   const text = eventText(event) || eventText(context);
   const command = slashCommandFromText(text);
-  if (command === "gptt") {
-    return await applySessionModelCommand(config, event, context, {
-      provider: "openai-codex",
-      model: "gpt-5.5",
-      thinkingLevel: "medium",
-      fastMode: true,
-    }, (status) => `Model set to gptt (openai-codex/gpt-5.5) with ${status.active || "active"} auth, thinking medium and fast on for this session.`);
-  }
-  if (command === "gptpro") {
-    return await applySessionModelCommand(config, event, context, {
-      provider: "openai",
-      model: "gpt-5.5-pro",
-      thinkingLevel: "high",
-      fastMode: false,
-    }, (status) => `Model set to gptpro (openai/gpt-5.5-pro) with ${status.active || "active"} auth, thinking high and fast off for this session.`);
-  }
+  const aliasHandled = await handleSessionAliasCommand(command, config, event, context);
+  if (aliasHandled.handled) return aliasHandled;
   const args = commandPartsFromText(text);
   if (!args) return { handled: false };
   if (!config.enabled) return { handled: true, text: "GPT profile switcher is disabled." };
@@ -678,6 +708,15 @@ const plugin = {
       description: "Switch OpenAI-Codex account profiles and try native Codex runtime without changing the safe Pi fallback.",
       acceptsArgs: false,
       handler: async () => await handleCommand(config),
+    });
+    api.registerCommand({
+      name: "gptpro",
+      description: "Switch this Telegram session to openai/gpt-5.5-pro on the native Codex runtime.",
+      acceptsArgs: false,
+      handler: async (ctx) => {
+        const result = await handleSessionAliasCommand("gptpro", config, ctx, ctx);
+        return { text: result.text || "GPT model switch failed: no response." };
+      },
     });
     if (typeof api.registerInteractiveHandler === "function") {
       api.registerInteractiveHandler({
