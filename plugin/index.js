@@ -329,13 +329,17 @@ function applySlashModelOverride(sessionKey, selection) {
   entry.providerOverride = selection.provider;
   entry.modelOverride = selection.model;
   entry.modelOverrideSource = "user";
-  if (selection.agentHarnessId) entry.agentHarnessId = selection.agentHarnessId;
+  if (selection.agentHarnessId) {
+    entry.agentHarnessId = selection.agentHarnessId;
+    entry.agentRuntime = { id: selection.agentHarnessId };
+  } else {
+    delete entry.agentRuntime;
+  }
   if (selection.thinkingLevel) entry.thinkingLevel = selection.thinkingLevel;
   if (typeof selection.fastMode === "boolean") entry.fastMode = selection.fastMode;
   delete entry.model;
   delete entry.modelProvider;
   delete entry.contextTokens;
-  delete entry.agentRuntime;
   delete entry.runtime;
   delete entry.runtimeId;
   delete entry.fallbackNoticeSelectedModel;
