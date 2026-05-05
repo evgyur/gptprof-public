@@ -710,6 +710,15 @@ const plugin = {
       handler: async () => await handleCommand(config),
     });
     api.registerCommand({
+      name: "gptt",
+      description: "Switch this Telegram session to openai-codex/gpt-5.5 with medium thinking and fast mode.",
+      acceptsArgs: false,
+      handler: async (ctx) => {
+        const result = await handleSessionAliasCommand("gptt", config, ctx, ctx);
+        return { text: result.text || "GPT model switch failed: no response." };
+      },
+    });
+    api.registerCommand({
       name: "gptpro",
       description: "Switch this Telegram session to openai/gpt-5.5-pro on the native Codex runtime.",
       acceptsArgs: false,
