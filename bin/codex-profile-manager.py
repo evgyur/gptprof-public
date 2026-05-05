@@ -334,13 +334,13 @@ def native_route_status():
         and primary.startswith("openai-codex/")
         and runtime_id == "pi"
     )
-    ok = legacy_pi_route
+    ok = legacy_pi_route or native_codex_route
     needs = []
     if not ok:
-        if not isinstance(primary, str) or not primary.startswith("openai-codex/"):
-            needs.append("model.primary must be openai-codex/* for the base PI route")
-        if runtime_id != "pi":
-            needs.append("agentRuntime.id must be pi for the base route")
+        if not isinstance(primary, str) or not (primary.startswith("openai-codex/") or primary.startswith("openai/")):
+            needs.append("model.primary must be openai-codex/* for Pi or openai/* for native Codex")
+        if runtime_id not in ("pi", "codex"):
+            needs.append("agentRuntime.id must be pi or codex")
     return {
         "ok": ok,
         "primaryModel": primary,
@@ -350,8 +350,8 @@ def native_route_status():
         "fallback": runtime.get("fallback") if isinstance(runtime.get("fallback"), str) else None,
         "authProvider": auth_provider,
         "routeMode": "legacy-pi" if legacy_pi_route else ("native-codex" if native_codex_route else "invalid"),
-        "expectedModelPrefix": "openai-codex/",
-        "expectedRuntime": "pi",
+        "expectedModelPrefix": "openai-codex/ or openai/",
+        "expectedRuntime": "pi or codex",
         "legacyPiRoute": legacy_pi_route,
         "nativeCodexRoute": native_codex_route,
         "needs": needs,
