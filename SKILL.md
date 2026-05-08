@@ -1,6 +1,6 @@
 ---
 name: gptprof-public
-description: Public sanitized GPT profile manager for OpenClaw: switch OpenAI Codex OAuth profiles, show usage, keep the safe Pi route, and optionally try the native Codex runtime without storing secrets in the skill.
+description: "Public sanitized GPT profile manager for OpenClaw: switch OpenAI Codex OAuth profiles, show usage, keep the safe Pi route, and optionally try the native Codex runtime without storing secrets in the skill."
 user-invocable: true
 disable-model-invocation: true
 command-dispatch: tool

@@ -219,12 +219,16 @@ function formatLeft(value) {
   return `${Math.max(0, Math.round(100 - Number(value)))}% left`;
 }
 
+function resetSuffix(countdownValue) {
+  if (typeof countdownValue !== "string" || !countdownValue.trim() || countdownValue === "-") return "";
+  return countdownValue === "expired" ? " · reset expired" : ` · reset in ${countdownValue}`;
+}
+
 function windowLeftLine(icon, label, window, countdownValue) {
   const used = Number(window?.usedPercent);
   if (!Number.isFinite(used)) return `${icon} ${label}: usage unavailable`;
   const left = Math.max(0, Math.round(100 - used));
-  if (left === 0 && countdownValue) return `${icon} ${label}: 0% left ⏱ ${countdownValue}`;
-  return `${icon} ${label}: ${left}% left`;
+  return `${icon} ${label}: ${left}% left${resetSuffix(countdownValue)}`;
 }
 
 function formatCacheAge(seconds) {

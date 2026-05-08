@@ -36,6 +36,7 @@ USAGE_CACHE_MAX_AGE_SECONDS = 15 * 60
 USAGE_HTTP_TIMEOUT_SECONDS = 6
 DEFAULT_NATIVE_MODEL = "openai/gpt-5.5"
 DEFAULT_PI_MODEL = "openai-codex/gpt-5.5"
+APP_SERVER_HEALTH_TIMEOUT_SECONDS = 2
 NATIVE_MODEL_ALIASES = {
     "openai/gpt-5.5": "gptt",
     "openai/gpt-5.4-mini": "gptm",
@@ -194,29 +195,30 @@ def cache_age_seconds(entry):
     return max(0, int(time.time() - ts))
 
 
+def format_duration_compact(seconds):
+    if not isinstance(seconds, (int, float)):
+        return None
+    remaining = int(max(0, seconds))
+    days = remaining // 86400
+    hours = (remaining % 86400) // 3600
+    minutes = (remaining % 3600) // 60
+    if days > 0:
+        return f"{days}d {hours}h" if hours else f"{days}d"
+    if hours > 0:
+        return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+    return f"{max(1, minutes)}m"
+
+
 def window_countdown(windows):
-    """Return countdown strings for fiveHour and weekly windows."""
+    """Return reset countdown strings for fiveHour and weekly windows."""
     now = time.time()
     result = {}
     for name in ("fiveHour", "weekly"):
         win = (windows or {}).get(name) or {}
-        used = win.get("usedPercent")
         reset = win.get("resetAt")
-        if not isinstance(used, (int, float)):
-            result[name] = None
-            continue
-        if used == 0:
-            result[name] = "-"
-        elif isinstance(reset, (int, float)):
+        if isinstance(reset, (int, float)):
             remaining = reset - now
-            if remaining <= 0:
-                result[name] = "expired"
-            elif remaining < 3600:
-                result[name] = f"~{int(remaining/60)}m"
-            elif remaining < 10 * 3600:
-                result[name] = f"~{remaining/3600:.1f}h"
-            else:
-                result[name] = f"~{int(remaining/3600)}h"
+            result[name] = "expired" if remaining <= 0 else format_duration_compact(remaining)
         else:
             result[name] = None
     return result
@@ -330,6 +332,24 @@ def usage_cache_summary():
     return out
 
 
+def codex_app_server_health(app_server=None):
+    app_server = app_server if isinstance(app_server, dict) else {}
+    raw_url = app_server.get("url") if isinstance(app_server.get("url"), str) else ""
+    if not raw_url:
+        return {"ok": False, "reason": "missing_app_server_url"}
+    parsed = urllib.parse.urlparse(raw_url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port
+    if port is None:
+        return {"ok": False, "reason": "missing_app_server_port", "url": raw_url}
+    try:
+        import socket
+        with socket.create_connection((host, port), timeout=APP_SERVER_HEALTH_TIMEOUT_SECONDS):
+            return {"ok": True, "host": host, "port": port}
+    except OSError as e:
+        return {"ok": False, "host": host, "port": port, "reason": "connect_failed", "error": str(e)[:200]}
+
+
 def native_route_status():
     cfg = load_json(OPENCLAW_CONFIG, {}) or {}
     agents = cfg.get("agents") if isinstance(cfg.get("agents"), dict) else {}
@@ -340,8 +360,10 @@ def native_route_status():
     allow = plugins.get("allow") if isinstance(plugins.get("allow"), list) else []
     entries = plugins.get("entries") if isinstance(plugins.get("entries"), dict) else {}
     codex_entry = entries.get("codex") if isinstance(entries.get("codex"), dict) else {}
+    app_server = codex_entry.get("config", {}).get("appServer") if isinstance(codex_entry.get("config"), dict) else {}
     primary = model.get("primary") if isinstance(model.get("primary"), str) else None
     runtime_id = runtime.get("id") if isinstance(runtime.get("id"), str) else None
+    app_server_health = codex_app_server_health(app_server)
     auth_provider = "openai-codex"
     native_codex_route = (
         isinstance(primary, str)
@@ -349,6 +371,7 @@ def native_route_status():
         and runtime_id == "codex"
         and "codex" in allow
         and codex_entry.get("enabled") is True
+        and app_server_health.get("ok") is True
     )
     legacy_pi_route = (
         isinstance(primary, str)
@@ -362,12 +385,15 @@ def native_route_status():
             needs.append("model.primary must be openai-codex/* for Pi or openai/* for native Codex")
         if runtime_id not in ("pi", "codex"):
             needs.append("agentRuntime.id must be pi or codex")
+        if runtime_id == "codex" and app_server_health.get("ok") is not True:
+            needs.append("codex app-server must be reachable before native Codex route is enabled")
     return {
         "ok": ok,
         "primaryModel": primary,
         "agentRuntime": runtime,
         "codexAllowed": "codex" in allow,
         "codexPluginEnabled": codex_entry.get("enabled") is True,
+        "codexAppServer": app_server_health,
         "fallback": runtime.get("fallback") if isinstance(runtime.get("fallback"), str) else None,
         "authProvider": auth_provider,
         "routeMode": "legacy-pi" if legacy_pi_route else ("native-codex" if native_codex_route else "invalid"),
@@ -427,7 +453,7 @@ def ensure_openai_codex_pi_route(model=None, reason="manual"):
     allow = plugins.get("allow")
     if not isinstance(allow, list):
         allow = []
-    for plugin_id in ("openai", "codex", "codex-profile-switcher"):
+    for plugin_id in ("openai", "codex-profile-switcher"):
         if plugin_id not in allow:
             allow.append(plugin_id)
     plugins["allow"] = allow
@@ -436,7 +462,7 @@ def ensure_openai_codex_pi_route(model=None, reason="manual"):
         entries = {}
     entries.setdefault("codex", {})
     if isinstance(entries["codex"], dict):
-        entries["codex"]["enabled"] = True
+        entries["codex"]["enabled"] = False
     plugins["entries"] = entries
 
     agents = cfg.setdefault("agents", {})
@@ -489,6 +515,12 @@ def ensure_native_codex_route(model=None, reason="manual"):
     cfg = load_json(OPENCLAW_CONFIG, {}) or {}
     if not isinstance(cfg, dict):
         cfg = {}
+    entries = ((cfg.get("plugins") or {}).get("entries") or {}) if isinstance((cfg.get("plugins") or {}).get("entries"), dict) else {}
+    codex_entry = entries.get("codex") if isinstance(entries.get("codex"), dict) else {}
+    app_server = codex_entry.get("config", {}).get("appServer") if isinstance(codex_entry.get("config"), dict) else {}
+    health = codex_app_server_health(app_server)
+    if health.get("ok") is not True:
+        raise RuntimeError(f"refusing native Codex route: codex app-server unhealthy ({health.get('reason') or 'unknown'})")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     backup_path(OPENCLAW_CONFIG, stamp)
 
@@ -714,7 +746,7 @@ def update_sessions_for_profile(agent_dir, sessions_path, profile_id, stamp):
     return dirty, changed_entries, archived_entries
 
 
-def update_agent_auth(auth, stamp):
+def update_agent_auth(auth, stamp, update_sessions=False):
     email, profile_id, record = openclaw_profile_record(auth)
     changed = {"authProfiles": 0, "authState": 0, "sessions": 0, "archivedNativeSessions": 0}
     if not AGENTS.exists():
@@ -753,6 +785,8 @@ def update_agent_auth(auth, stamp):
             backup_path(asp, stamp)
             write_json_atomic(asp, data)
             changed["authState"] += 1
+        if not update_sessions:
+            continue
         sp = agent_dir / "sessions" / "sessions.json"
         if sp.exists():
             dirty, _, archived = update_sessions_for_profile(agent_dir, sp, profile_id, stamp)
@@ -808,7 +842,7 @@ def switch_profile(slug, reason="manual"):
             raise RuntimeError(f"refusing to replace directory: {CODEX_HOME_AUTH}")
         CODEX_HOME_AUTH.unlink()
     os.symlink(str(CODEX_AUTH), str(CODEX_HOME_AUTH))
-    changed = update_agent_auth(auth, stamp)
+    changed = update_agent_auth(auth, stamp, update_sessions=False)
     state = load_state()
     old = state.get("active")
     state["active"] = slug
@@ -819,6 +853,96 @@ def switch_profile(slug, reason="manual"):
     save_state(state)
     route = native_route_status()
     return {"ok": True, "active": slug, "email": email, "profileId": f"openai-codex:{email}", "changed": changed, "backupStamp": stamp, "route": route}
+
+
+STALE_SESSION_FIELDS = (
+    "status",
+    "startedAt",
+    "systemPromptReport",
+    "modelProvider",
+    "model",
+    "contextTokens",
+    "fallbackNoticeSelectedModel",
+    "fallbackNoticeActiveModel",
+    "fallbackNoticeReason",
+    "runtime",
+    "runtimeId",
+)
+
+
+def session_repair_plan(agent_ids=None):
+    route = native_route_status()
+    native_ok = route.get("nativeCodexRoute") is True
+    wanted = set(agent_ids or [])
+    changes = []
+    for agent_dir in sorted(p for p in AGENTS.iterdir() if p.is_dir()) if AGENTS.exists() else []:
+        agent_id = agent_dir.name
+        if wanted and agent_id not in wanted:
+            continue
+        sp = agent_dir / "sessions" / "sessions.json"
+        if not sp.exists():
+            continue
+        data = load_json(sp, {})
+        if not isinstance(data, dict):
+            continue
+        for key, session in data.items():
+            if not isinstance(session, dict):
+                continue
+            remove = [field for field in STALE_SESSION_FIELDS if field in session]
+            set_values = {}
+            auth_override = session.get("authProfileOverride")
+            if auth_override and not str(auth_override).startswith("openai-codex:"):
+                remove.extend(["authProfileOverride", "authProfileOverrideSource"])
+            if session.get("agentHarnessId") == "codex" and not native_ok:
+                set_values["agentHarnessId"] = "pi"
+            if session.get("providerOverride") == "openai" and not native_ok:
+                set_values["providerOverride"] = "openai-codex"
+            if remove or set_values:
+                changes.append({
+                    "agent": agent_id,
+                    "path": str(sp),
+                    "sessionKey": key,
+                    "remove": sorted(set(remove)),
+                    "set": set_values,
+                })
+    return {"ok": True, "dryRun": True, "route": route, "changes": changes}
+
+
+def repair_sessions(agent_ids=None, apply=False):
+    plan = session_repair_plan(agent_ids)
+    if not apply:
+        return plan
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    by_path = {}
+    for change in plan["changes"]:
+        by_path.setdefault(change["path"], []).append(change)
+    applied = []
+    for path, changes in by_path.items():
+        p = Path(path)
+        data = load_json(p, {})
+        if not isinstance(data, dict):
+            continue
+        dirty = False
+        for change in changes:
+            session = data.get(change["sessionKey"])
+            if not isinstance(session, dict):
+                continue
+            for field in change["remove"]:
+                if field in session:
+                    session.pop(field, None)
+                    dirty = True
+            for field, value in change["set"].items():
+                if session.get(field) != value:
+                    session[field] = value
+                    dirty = True
+            if dirty:
+                session["abortedLastRun"] = True
+                session["updatedAt"] = int(time.time() * 1000)
+        if dirty:
+            backup_path(p, stamp)
+            write_json_atomic(p, data)
+            applied.append({"path": path, "changes": len(changes)})
+    return {**plan, "dryRun": False, "applied": applied, "backupStamp": stamp}
 
 
 def http_json(url, payload=None, headers=None, timeout=20):
@@ -1098,6 +1222,7 @@ def main():
     sub.add_parser("autoswitch")
     route = sub.add_parser("apply-native-route"); route.add_argument("--model", default=DEFAULT_NATIVE_MODEL)
     pi_route = sub.add_parser("apply-pi-route"); pi_route.add_argument("--model", default=DEFAULT_PI_MODEL)
+    repair = sub.add_parser("repair-sessions"); repair.add_argument("--agent", action="append", dest="agents"); repair.add_argument("--apply", action="store_true")
     sub.add_parser("device-start")
     sub.add_parser("device-check")
     args = parser.parse_args()
@@ -1141,6 +1266,8 @@ def main():
             out = ensure_native_codex_route(model=args.model, reason="manual")
         elif args.cmd == "apply-pi-route":
             out = ensure_openai_codex_pi_route(model=args.model, reason="manual")
+        elif args.cmd == "repair-sessions":
+            out = repair_sessions(agent_ids=args.agents, apply=args.apply)
         elif args.cmd == "device-start":
             out = device_start()
         elif args.cmd == "device-check":
